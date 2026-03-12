@@ -1,12 +1,14 @@
 from dataclasses import dataclass, field
-from typing import Any
+from functools import cached_property
 import json
 from shapely.geometry import shape, mapping
 from shapely import Geometry
+from pyproj import Geod
 
 
 @dataclass
 class Place:
+    """An administrative division (country, state, county, city, etc.)."""
     id: str
     name: str
     subtype: str
@@ -27,6 +29,7 @@ class Place:
 
 @dataclass
 class Feature:
+    """A geographic feature (land, water, land-use, or point of interest)."""
     id: str
     name: str
     source: str  # "land", "water", "land_use", "place"
@@ -50,13 +53,24 @@ class Feature:
 
 
 @dataclass
+class TokenUsage:
+    """Accumulated token usage across all LLM calls in a resolve session."""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+@dataclass
 class ResolverResult:
+    """The output of :meth:`GeoResolver.resolve`."""
     query: str
     geometry: Geometry
     steps: list[dict] = field(default_factory=list)
+    usage: TokenUsage = field(default_factory=TokenUsage)
 
     @property
     def geojson(self) -> dict:
+        """Return the geometry as a GeoJSON Feature dict."""
         return {
             "type": "Feature",
             "properties": {"query": self.query},
@@ -65,15 +79,17 @@ class ResolverResult:
 
     @property
     def bounds(self) -> tuple[float, float, float, float]:
+        """Bounding box as ``(minx, miny, maxx, maxy)``."""
         return self.geometry.bounds
 
-    @property
+    @cached_property
     def area_km2(self) -> float:
-        from pyproj import Geod
+        """Geodesic area in square kilometres."""
         geod = Geod(ellps="WGS84")
         area, _ = geod.geometry_area_perimeter(self.geometry)
         return abs(area) / 1e6
 
     def save(self, path: str):
+        """Write the GeoJSON Feature to *path*."""
         with open(path, "w") as f:
             json.dump(self.geojson, f, indent=2)

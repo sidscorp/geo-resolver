@@ -5,26 +5,19 @@ import sys
 from .resolver import GeoResolver
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        prog="geo-resolve",
-        description="Resolve natural language geographic queries to GeoJSON",
-    )
-    parser.add_argument("query", help="Geographic query (e.g. 'Bay Area')")
-    parser.add_argument("-o", "--output", help="Output file path (.geojson)")
-    parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output")
-    parser.add_argument("--model", default=None, help="Override LLM model")
-    args = parser.parse_args()
-
+def _cmd_resolve(args):
     kwargs = {}
     if args.model:
         kwargs["model"] = args.model
+    if args.api_key:
+        kwargs["api_key"] = args.api_key
+    if args.base_url:
+        kwargs["base_url"] = args.base_url
+    if args.data_dir:
+        kwargs["data_dir"] = args.data_dir
 
-    resolver = GeoResolver(**kwargs)
-    try:
-        result = resolver.resolve(args.query)
-    finally:
-        resolver.close()
+    with GeoResolver(**kwargs) as resolver:
+        result = resolver.resolve(args.query, max_iterations=args.max_iterations)
 
     indent = 2 if args.pretty else None
     geojson_str = json.dumps(result.geojson, indent=indent)
@@ -35,6 +28,83 @@ def main():
         print(f"Saved to {args.output}", file=sys.stderr)
     else:
         print(geojson_str)
+
+
+def _cmd_download_data(args):
+    from .data.download import download, THEMES
+    themes = args.theme if args.theme else None
+    download(themes, release=args.release)
+
+
+def _cmd_build_db(args):
+    from .data.build import BUILDERS
+    sources = args.source if args.source else ["divisions"]
+    for source in sources:
+        print(f"\n=== Building {source} ===")
+        BUILDERS[source]()
+    print("\nDone!")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="geo-resolve",
+        description="Resolve natural language geographic queries to GeoJSON",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    # resolve subcommand
+    resolve_parser = subparsers.add_parser("resolve", help="Resolve a geographic query to GeoJSON")
+    resolve_parser.add_argument("query", help="Geographic query (e.g. 'Bay Area')")
+    resolve_parser.add_argument("-o", "--output", help="Output file path (.geojson)")
+    resolve_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output")
+    resolve_parser.add_argument("--model", default=None, help="LLM model (litellm format)")
+    resolve_parser.add_argument("--api-key", default=None, help="LLM API key")
+    resolve_parser.add_argument("--base-url", default=None, help="LLM API base URL")
+    resolve_parser.add_argument("--data-dir", default=None, help="Path to data directory")
+    resolve_parser.add_argument(
+        "--max-iterations", type=int, default=20,
+        help="Maximum LLM iterations (default: 20)",
+    )
+
+    # download-data subcommand
+    from .data.download import THEMES, DEFAULT_RELEASE
+    dl_parser = subparsers.add_parser("download-data", help="Download Overture Maps data")
+    dl_parser.add_argument(
+        "--theme", nargs="+", choices=list(THEMES.keys()),
+        help="Themes to download (default: division division_area)",
+    )
+    dl_parser.add_argument(
+        "--release", default=DEFAULT_RELEASE,
+        help=f"Overture Maps release version (default: {DEFAULT_RELEASE})",
+    )
+
+    # build-db subcommand
+    from .data.build import BUILDERS
+    build_parser = subparsers.add_parser("build-db", help="Build DuckDB databases from parquet files")
+    build_parser.add_argument(
+        "--source", nargs="+", choices=list(BUILDERS.keys()),
+        help="Sources to build (default: divisions)",
+    )
+
+    return parser
+
+
+def main():
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    parser = build_parser()
+    args = parser.parse_args()
+
+    if args.command == "resolve":
+        _cmd_resolve(args)
+    elif args.command == "download-data":
+        _cmd_download_data(args)
+    elif args.command == "build-db":
+        _cmd_build_db(args)
+    else:
+        parser.print_help()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

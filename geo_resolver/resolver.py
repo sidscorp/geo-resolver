@@ -1,11 +1,10 @@
 import json
 import logging
 import os
-from openai import OpenAI
-from dotenv import load_dotenv
+from litellm import OpenAI
 from .db import PlaceDB
 from .tools import ToolExecutor, TOOL_DEFINITIONS
-from .models import ResolverResult
+from .models import ResolverResult, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -55,78 +54,135 @@ EXAMPLES:
 - "Statue of Liberty" → search_pois("Statue of Liberty"), then buffer with suggested_buffer_km
 - "Within 50km of the Eiffel Tower" → search_pois("Eiffel Tower"), buffer 50km"""
 
-MAX_ITERATIONS = 20
-DEFAULT_MODEL = "google/gemini-2.5-flash"
+def _search_description(label: str, args: dict, qualifier_key: str) -> str:
+    name = args.get("name", "?")
+    qualifier = args.get(qualifier_key)
+    suffix = f" ({qualifier})" if qualifier else ""
+    return f"Searching {label} for {name}{suffix}..."
+
+
+def _describe_places(args: dict) -> str:
+    name = args.get("name", "?")
+    ctx = args.get("context")
+    ptype = args.get("place_type")
+    parts = [f"Searching for {name}"]
+    if ctx:
+        parts.append(f"in {ctx}")
+    if ptype:
+        parts.append(f"({ptype})")
+    return " ".join(parts) + "..."
+
+
+_STEP_DISPATCH: dict[str, callable] = {
+    "search_places": _describe_places,
+    "search_land_features": lambda a: _search_description("land features", a, "feature_class"),
+    "search_water_features": lambda a: _search_description("water features", a, "feature_class"),
+    "search_land_use": lambda a: _search_description("land use areas", a, "subtype"),
+    "search_pois": lambda a: _search_description("points of interest", a, "category"),
+    "union": lambda a: f"Combining {len(a.get('geometry_ids', []))} regions...",
+    "intersection": lambda a: "Finding overlap between two regions...",
+    "difference": lambda a: "Subtracting one region from another...",
+    "buffer": lambda a: f"Creating a {a.get('distance_km', '?')}km buffer zone...",
+    "directional_subset": lambda a: f"Extracting {a.get('direction', '?')} portion...",
+    "finalize": lambda a: "Finalizing result...",
+}
 
 
 def _describe_step(tool: str, args: dict) -> str:
-    if tool == "search_places":
-        name = args.get("name", "?")
-        ctx = args.get("context")
-        ptype = args.get("place_type")
-        parts = [f"Searching for {name}"]
-        if ctx:
-            parts.append(f"in {ctx}")
-        if ptype:
-            parts.append(f"({ptype})")
-        return " ".join(parts) + "..."
-    elif tool == "search_land_features":
-        name = args.get("name", "?")
-        fc = args.get("feature_class")
-        suffix = f" ({fc})" if fc else ""
-        return f"Searching land features for {name}{suffix}..."
-    elif tool == "search_water_features":
-        name = args.get("name", "?")
-        fc = args.get("feature_class")
-        suffix = f" ({fc})" if fc else ""
-        return f"Searching water features for {name}{suffix}..."
-    elif tool == "search_land_use":
-        name = args.get("name", "?")
-        st = args.get("subtype")
-        suffix = f" ({st})" if st else ""
-        return f"Searching land use areas for {name}{suffix}..."
-    elif tool == "search_pois":
-        name = args.get("name", "?")
-        cat = args.get("category")
-        suffix = f" ({cat})" if cat else ""
-        return f"Searching points of interest for {name}{suffix}..."
-    elif tool == "union":
-        ids = args.get("geometry_ids", [])
-        return f"Combining {len(ids)} regions..."
-    elif tool == "intersection":
-        return "Finding overlap between two regions..."
-    elif tool == "difference":
-        return "Subtracting one region from another..."
-    elif tool == "buffer":
-        km = args.get("distance_km", "?")
-        return f"Creating a {km}km buffer zone..."
-    elif tool == "directional_subset":
-        direction = args.get("direction", "?")
-        return f"Extracting {direction} portion..."
-    elif tool == "finalize":
-        return "Finalizing result..."
+    fn = _STEP_DISPATCH.get(tool)
+    if fn:
+        return fn(args)
     return f"Running {tool}..."
 
 
 class GeoResolver:
-    def __init__(self, data_dir: str = None, model: str = DEFAULT_MODEL):
-        load_dotenv()
-        if data_dir is None:
-            data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
-        self.db = PlaceDB(data_dir)
-        self.model = model
-        self.client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=os.environ["OPENROUTER_API_KEY"],
-        )
+    """Resolve natural language geographic queries into Shapely geometries.
 
-    def resolve(self, query: str, on_step=None, verbose: bool = False) -> ResolverResult:
+    Uses an LLM tool-calling loop to search Overture Maps data and compose
+    spatial operations until a final boundary polygon is produced.
+    """
+
+    def __init__(
+        self,
+        data_dir: str | None = None,
+        model: str | None = None,
+        *,
+        client: OpenAI | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ):
+        """Initialise the resolver.
+
+        Args:
+            data_dir: Path to the DuckDB data directory. Defaults to
+                ``GEO_RESOLVER_DATA_DIR`` env var or ``~/.geo-resolver/data``.
+            model: LLM model identifier (e.g. ``"openai/gpt-4o"``). Falls back
+                to ``GEO_RESOLVER_MODEL`` env var.
+            client: Pre-built ``OpenAI`` client instance. If provided,
+                *api_key* and *base_url* are ignored.
+            api_key: API key passed to the default client constructor.
+            base_url: Base URL passed to the default client constructor.
+        """
+        if data_dir is None:
+            data_dir = os.environ.get(
+                "GEO_RESOLVER_DATA_DIR",
+                os.path.expanduser("~/.geo-resolver/data"),
+            )
+        self.db = PlaceDB(data_dir)
+
+        self.model = (
+            model
+            or os.environ.get("GEO_RESOLVER_MODEL")
+        )
+        if self.model is None:
+            raise ValueError(
+                "model is required — pass it to GeoResolver() or set GEO_RESOLVER_MODEL env var"
+            )
+
+        if client is not None:
+            self.client = client
+        else:
+            self.client = OpenAI(
+                api_key=api_key or os.environ.get("GEO_RESOLVER_API_KEY"),
+                base_url=base_url or os.environ.get("GEO_RESOLVER_BASE_URL"),
+            )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+    def resolve(self, query: str, on_step=None, verbose: bool = False, max_iterations: int = 20) -> ResolverResult:
+        """Resolve a natural language query into a ``ResolverResult``.
+
+        Args:
+            query: Geographic description (e.g. ``"Northern California"``).
+            on_step: Optional callback invoked with a step dict after each
+                tool call or LLM thinking message.
+            verbose: If ``True``, print step summaries to stdout.
+
+        Returns:
+            A :class:`~geo_resolver.models.ResolverResult` containing the
+            resolved geometry, the original query, and the step log.
+
+        Raises:
+            ValueError: If *query* is empty or exceeds 2000 characters.
+            RuntimeError: If no matching geometry could be found.
+        """
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("query must be a non-empty string")
+        if len(query) > 2000:
+            raise ValueError("query must be at most 2000 characters")
+
         executor = ToolExecutor(self.db)
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": query},
         ]
         steps = []
+        usage = TokenUsage()
         text_responses = 0
 
         def _emit(step: dict):
@@ -136,12 +192,17 @@ class GeoResolver:
             if verbose:
                 print(f"  {step.get('message', step.get('tool', '...'))}")
 
-        for i in range(MAX_ITERATIONS):
+        for i in range(max_iterations):
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 tools=TOOL_DEFINITIONS,
             )
+            if response.usage:
+                usage.prompt_tokens += response.usage.prompt_tokens
+                usage.completion_tokens += response.usage.completion_tokens
+                usage.total_tokens += response.usage.total_tokens
+
             choice = response.choices[0]
 
             if choice.message.tool_calls:
@@ -205,7 +266,17 @@ class GeoResolver:
                 )
 
         geometry = executor.geometries[executor.final_id]
-        return ResolverResult(query=query, geometry=geometry, steps=steps)
+        return ResolverResult(query=query, geometry=geometry, steps=steps, usage=usage)
+
+    async def resolve_async(
+        self, query: str, on_step=None, verbose: bool = False, max_iterations: int = 20,
+    ) -> ResolverResult:
+        """Async wrapper around :meth:`resolve` using ``asyncio.to_thread``."""
+        import asyncio
+        return await asyncio.to_thread(
+            self.resolve, query, on_step=on_step, verbose=verbose, max_iterations=max_iterations,
+        )
 
     def close(self):
+        """Close underlying database connections."""
         self.db.close()

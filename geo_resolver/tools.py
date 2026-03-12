@@ -276,6 +276,8 @@ TOOL_DEFINITIONS = [
 
 
 class ToolExecutor:
+    """Execute LLM tool calls against a :class:`PlaceDB` and manage geometry state."""
+
     def __init__(self, db: PlaceDB):
         self.db = db
         self.geometries: dict[str, Geometry] = {}
@@ -298,6 +300,7 @@ class ToolExecutor:
         return self.geometries[gid]
 
     def execute(self, name: str, args: dict) -> str:
+        """Dispatch a tool call by *name* with *args*, returning a JSON string."""
         try:
             if name == "search_places":
                 return self._search_places(**args)
@@ -327,88 +330,57 @@ class ToolExecutor:
             logger.warning("Tool %s failed with args %s: %s", name, args, e, exc_info=True)
             return json.dumps({"error": str(e)})
 
-    def _search_places(self, name: str, place_type: str = None, context: str = None) -> str:
-        places = self.db.search_places(name, place_type, context)
+    def _format_search_results(self, items: list, add_buffer_hint: bool = False) -> str:
         results = []
-        for p in places:
-            entry = p.to_dict()
-            if p.geometry is not None:
-                gid = self._store(p.geometry)
+        for item in items:
+            entry = item.to_dict()
+            if item.geometry is not None:
+                gid = self._store(item.geometry)
                 entry["geometry_id"] = gid
+            if add_buffer_hint:
+                entry["suggested_buffer_km"] = POI_BUFFER_KM.get(item.feature_class, 0.3)
             results.append(entry)
         return json.dumps(results, indent=2)
 
-    def _search_land_features(self, name: str, feature_class: str = None, context: str = None) -> str:
-        features = self.db.search_land_features(name, feature_class)
-        results = []
-        for f in features:
-            entry = f.to_dict()
-            if f.geometry is not None:
-                gid = self._store(f.geometry)
-                entry["geometry_id"] = gid
-            results.append(entry)
-        return json.dumps(results, indent=2)
+    def _search_places(self, name: str, place_type: str | None = None, context: str | None = None) -> str:
+        return self._format_search_results(self.db.search_places(name, place_type, context))
 
-    def _search_water_features(self, name: str, feature_class: str = None, context: str = None) -> str:
-        features = self.db.search_water_features(name, feature_class)
-        results = []
-        for f in features:
-            entry = f.to_dict()
-            if f.geometry is not None:
-                gid = self._store(f.geometry)
-                entry["geometry_id"] = gid
-            results.append(entry)
-        return json.dumps(results, indent=2)
+    def _search_land_features(self, name: str, feature_class: str | None = None, context: str | None = None) -> str:
+        return self._format_search_results(self.db.search_land_features(name, feature_class))
 
-    def _search_land_use(self, name: str, subtype: str = None, context: str = None) -> str:
-        features = self.db.search_land_use(name, subtype)
-        results = []
-        for f in features:
-            entry = f.to_dict()
-            if f.geometry is not None:
-                gid = self._store(f.geometry)
-                entry["geometry_id"] = gid
-            results.append(entry)
-        return json.dumps(results, indent=2)
+    def _search_water_features(self, name: str, feature_class: str | None = None, context: str | None = None) -> str:
+        return self._format_search_results(self.db.search_water_features(name, feature_class))
 
-    def _search_pois(self, name: str, category: str = None, context: str = None) -> str:
-        features = self.db.search_pois(name, category)
-        results = []
-        for f in features:
-            entry = f.to_dict()
-            if f.geometry is not None:
-                gid = self._store(f.geometry)
-                entry["geometry_id"] = gid
-            suggested = POI_BUFFER_KM.get(f.feature_class, 0.3)
-            entry["suggested_buffer_km"] = suggested
-            results.append(entry)
-        return json.dumps(results, indent=2)
+    def _search_land_use(self, name: str, subtype: str | None = None, context: str | None = None) -> str:
+        return self._format_search_results(self.db.search_land_use(name, subtype))
+
+    def _search_pois(self, name: str, category: str | None = None, context: str | None = None) -> str:
+        return self._format_search_results(self.db.search_pois(name, category), add_buffer_hint=True)
+
+    def _spatial_result_json(self, result: Geometry) -> str:
+        gid = self._store(result)
+        data: dict = {"geometry_id": gid, "type": result.geom_type}
+        if result.is_empty:
+            data["warning"] = "result geometry is empty"
+        return json.dumps(data)
 
     def _union(self, geometry_ids: list[str]) -> str:
         geoms = [self._get(gid) for gid in geometry_ids]
-        result = spatial_ops.union(geoms)
-        gid = self._store(result)
-        return json.dumps({"geometry_id": gid, "type": result.geom_type})
+        return self._spatial_result_json(spatial_ops.union(geoms))
 
     def _intersection(self, geometry_id_a: str, geometry_id_b: str) -> str:
         result = spatial_ops.intersection(self._get(geometry_id_a), self._get(geometry_id_b))
-        gid = self._store(result)
-        return json.dumps({"geometry_id": gid, "type": result.geom_type})
+        return self._spatial_result_json(result)
 
     def _difference(self, geometry_id_a: str, geometry_id_b: str) -> str:
         result = spatial_ops.difference(self._get(geometry_id_a), self._get(geometry_id_b))
-        gid = self._store(result)
-        return json.dumps({"geometry_id": gid, "type": result.geom_type})
+        return self._spatial_result_json(result)
 
     def _buffer(self, geometry_id: str, distance_km: float) -> str:
-        result = spatial_ops.buffer_km(self._get(geometry_id), distance_km)
-        gid = self._store(result)
-        return json.dumps({"geometry_id": gid, "type": result.geom_type})
+        return self._spatial_result_json(spatial_ops.buffer_km(self._get(geometry_id), distance_km))
 
     def _directional_subset(self, geometry_id: str, direction: str) -> str:
-        result = spatial_ops.directional_subset(self._get(geometry_id), direction)
-        gid = self._store(result)
-        return json.dumps({"geometry_id": gid, "type": result.geom_type})
+        return self._spatial_result_json(spatial_ops.directional_subset(self._get(geometry_id), direction))
 
     def _finalize(self, geometry_id: str) -> str:
         self.final_id = geometry_id
