@@ -6,18 +6,26 @@ from .models import Place, Feature
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+_VALID_FEATURE_TABLES = frozenset({"land_features", "water_features", "land_use_features"})
+_VALID_COLUMNS = frozenset({"class", "subtype", "category"})
 
 
 class PlaceDB:
-    def __init__(self, data_dir: str = DEFAULT_DATA_DIR):
+    """Read-only interface to the Overture Maps DuckDB databases.
+
+    Manages connections to three databases: divisions, features, and places.
+    """
+
+    def __init__(self, data_dir: str):
+        """Open database connections from *data_dir*."""
         self.data_dir = data_dir
 
         db_path = os.path.join(data_dir, "divisions.duckdb")
         if not os.path.exists(db_path):
             raise FileNotFoundError(
                 f"Database not found at {db_path}. "
-                "Run: python scripts/download_data.py && python scripts/build_db.py"
+                "Run: python scripts/download_data.py && python scripts/build_db.py\n"
+                "Or set GEO_RESOLVER_DATA_DIR to the correct data directory."
             )
         self.con = duckdb.connect(db_path, read_only=True)
 
@@ -60,6 +68,7 @@ class PlaceDB:
         context: str | None = None,
         limit: int = 5,
     ) -> list[Place]:
+        """Search administrative divisions by name, with optional type and context filters."""
         conditions = ["(name ILIKE $name_pattern OR name_en ILIKE $name_pattern)"]
         params = {"name_pattern": f"%{name}%"}
 
@@ -139,6 +148,11 @@ class PlaceDB:
         limit: int = 5,
     ) -> list[Feature]:
         """Generic search across feature tables (land, water, land_use)."""
+        if table not in _VALID_FEATURE_TABLES:
+            raise ValueError(f"Invalid feature table: {table!r}")
+        if class_column not in _VALID_COLUMNS:
+            raise ValueError(f"Invalid column name: {class_column!r}")
+
         if self.features_con is None:
             return []
 
@@ -186,6 +200,7 @@ class PlaceDB:
     def search_land_features(
         self, name: str, feature_class: str | None = None, limit: int = 5
     ) -> list[Feature]:
+        """Search natural land features (islands, mountains, peaks, etc.)."""
         return self._search_feature_table(
             "land_features", "land", name,
             class_column="class", class_value=feature_class, limit=limit,
@@ -194,6 +209,7 @@ class PlaceDB:
     def search_water_features(
         self, name: str, feature_class: str | None = None, limit: int = 5
     ) -> list[Feature]:
+        """Search water features (lakes, rivers, bays, etc.)."""
         return self._search_feature_table(
             "water_features", "water", name,
             class_column="class", class_value=feature_class, limit=limit,
@@ -202,6 +218,7 @@ class PlaceDB:
     def search_land_use(
         self, name: str, subtype: str | None = None, limit: int = 5
     ) -> list[Feature]:
+        """Search land-use areas (parks, protected areas, cemeteries, etc.)."""
         return self._search_feature_table(
             "land_use_features", "land_use", name,
             class_column="subtype", class_value=subtype, limit=limit,
@@ -257,12 +274,14 @@ class PlaceDB:
         return results
 
     def get_subtypes(self) -> list[str]:
+        """Return all distinct division subtypes in the database."""
         rows = self.con.execute(
             "SELECT DISTINCT subtype FROM divisions ORDER BY subtype"
         ).fetchall()
         return [r[0] for r in rows]
 
     def close(self):
+        """Close all database connections."""
         self.con.close()
         if self.features_con:
             self.features_con.close()

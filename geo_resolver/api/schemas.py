@@ -1,8 +1,9 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ResolveRequest(BaseModel):
-    query: str
+    query: str = Field(..., min_length=1, max_length=2000)
+    simplify_tolerance: float = Field(0.001, ge=0, le=1)
 
 
 class ResolveResponse(BaseModel):

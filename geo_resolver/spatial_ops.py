@@ -5,14 +5,17 @@ from shapely.geometry import box
 
 
 def union(geometries: list[Geometry]) -> Geometry:
+    """Return the union of all *geometries*."""
     return unary_union(geometries)
 
 
 def intersection(a: Geometry, b: Geometry) -> Geometry:
+    """Return the geometric intersection of *a* and *b*."""
     return a.intersection(b)
 
 
 def difference(a: Geometry, b: Geometry) -> Geometry:
+    """Return *a* minus *b* (geometric difference)."""
     return a.difference(b)
 
 
@@ -22,6 +25,7 @@ def _utm_epsg(lon: float, lat: float) -> int:
 
 
 def buffer_km(geometry: Geometry, distance_km: float) -> Geometry:
+    """Buffer *geometry* by *distance_km* kilometres using a local UTM projection."""
     centroid = geometry.centroid
     epsg = _utm_epsg(centroid.x, centroid.y)
     to_utm = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True).transform
@@ -32,6 +36,7 @@ def buffer_km(geometry: Geometry, distance_km: float) -> Geometry:
 
 
 def directional_subset(geometry: Geometry, direction: str) -> Geometry:
+    """Clip *geometry* to a compass *direction* (e.g. ``"north"``, ``"southwest"``)."""
     minx, miny, maxx, maxy = geometry.bounds
     cx = (minx + maxx) / 2
     cy = (miny + maxy) / 2
