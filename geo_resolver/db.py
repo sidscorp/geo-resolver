@@ -1,7 +1,10 @@
+import logging
 import os
 import duckdb
 from shapely import wkb
-from .models import Place
+from .models import Place, Feature
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
@@ -9,6 +12,7 @@ DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 class PlaceDB:
     def __init__(self, data_dir: str = DEFAULT_DATA_DIR):
         self.data_dir = data_dir
+
         db_path = os.path.join(data_dir, "divisions.duckdb")
         if not os.path.exists(db_path):
             raise FileNotFoundError(
@@ -16,6 +20,20 @@ class PlaceDB:
                 "Run: python scripts/download_data.py && python scripts/build_db.py"
             )
         self.con = duckdb.connect(db_path, read_only=True)
+
+        features_path = os.path.join(data_dir, "features.duckdb")
+        self.features_con = None
+        if os.path.exists(features_path):
+            self.features_con = duckdb.connect(features_path, read_only=True)
+            self.features_con.execute("INSTALL spatial; LOAD spatial;")
+            logger.info("Loaded features database")
+
+        places_path = os.path.join(data_dir, "places.duckdb")
+        self.places_con = None
+        if os.path.exists(places_path):
+            self.places_con = duckdb.connect(places_path, read_only=True)
+            self.places_con.execute("INSTALL spatial; LOAD spatial;")
+            logger.info("Loaded places database")
 
     def _resolve_context(self, context: str) -> tuple[str | None, str | None]:
         row = self.con.execute("""
@@ -42,7 +60,6 @@ class PlaceDB:
         context: str | None = None,
         limit: int = 5,
     ) -> list[Place]:
-        # Step 1: find matching division IDs (fast, no geometry join)
         conditions = ["(name ILIKE $name_pattern OR name_en ILIKE $name_pattern)"]
         params = {"name_pattern": f"%{name}%"}
 
@@ -86,21 +103,19 @@ class PlaceDB:
         if not rows:
             return []
 
-        # Step 2: fetch geometries only for matched IDs
         matched_ids = [r[0] for r in rows]
-        placeholders = ", ".join(f"'{mid}'" for mid in matched_ids)
-        geom_rows = self.con.execute(f"""
+        geom_rows = self.con.execute("""
             SELECT division_id, geom_wkb
             FROM division_areas
-            WHERE division_id IN ({placeholders})
-        """).fetchall()
+            WHERE division_id = ANY($ids)
+        """, {"ids": matched_ids}).fetchall()
         geom_map = {}
         for div_id, geom_wkb_data in geom_rows:
             if geom_wkb_data is not None:
                 try:
                     geom_map[div_id] = wkb.loads(bytes(geom_wkb_data))
                 except Exception:
-                    pass
+                    logger.warning("Failed to parse WKB for division %s", div_id, exc_info=True)
 
         results = []
         for row in rows:
@@ -114,6 +129,133 @@ class PlaceDB:
             ))
         return results
 
+    def _search_feature_table(
+        self,
+        table: str,
+        source: str,
+        name: str,
+        class_column: str = "class",
+        class_value: str | None = None,
+        limit: int = 5,
+    ) -> list[Feature]:
+        """Generic search across feature tables (land, water, land_use)."""
+        if self.features_con is None:
+            return []
+
+        conditions = ["(name ILIKE $name_pattern OR name_en ILIKE $name_pattern)"]
+        params = {"name_pattern": f"%{name}%", "exact_name": name, "limit": limit}
+
+        if class_value:
+            conditions.append(f"{class_column} = $class_value")
+            params["class_value"] = class_value
+
+        where = " AND ".join(conditions)
+
+        query = f"""
+            SELECT id, COALESCE(name_en, name) as display_name,
+                   {class_column}, geom_wkb, geom_type
+            FROM {table}
+            WHERE {where}
+            ORDER BY
+                CASE WHEN name = $exact_name OR name_en = $exact_name THEN 0
+                     WHEN name ILIKE $exact_name OR name_en ILIKE $exact_name THEN 1
+                     ELSE 2 END
+            LIMIT $limit
+        """
+
+        rows = self.features_con.execute(query, params).fetchall()
+        results = []
+        for row in rows:
+            geom = None
+            if row[3] is not None:
+                try:
+                    geom = wkb.loads(bytes(row[3]))
+                except Exception:
+                    logger.warning("Failed to parse WKB for %s %s", source, row[0], exc_info=True)
+
+            results.append(Feature(
+                id=row[0],
+                name=row[1],
+                source=source,
+                feature_class=row[2],
+                geometry=geom,
+                geom_type=row[4],
+            ))
+        return results
+
+    def search_land_features(
+        self, name: str, feature_class: str | None = None, limit: int = 5
+    ) -> list[Feature]:
+        return self._search_feature_table(
+            "land_features", "land", name,
+            class_column="class", class_value=feature_class, limit=limit,
+        )
+
+    def search_water_features(
+        self, name: str, feature_class: str | None = None, limit: int = 5
+    ) -> list[Feature]:
+        return self._search_feature_table(
+            "water_features", "water", name,
+            class_column="class", class_value=feature_class, limit=limit,
+        )
+
+    def search_land_use(
+        self, name: str, subtype: str | None = None, limit: int = 5
+    ) -> list[Feature]:
+        return self._search_feature_table(
+            "land_use_features", "land_use", name,
+            class_column="subtype", class_value=subtype, limit=limit,
+        )
+
+    def search_pois(
+        self, name: str, category: str | None = None, limit: int = 5
+    ) -> list[Feature]:
+        """Search POIs. Always returns is_point=True."""
+        if self.places_con is None:
+            return []
+
+        conditions = ["(name ILIKE $name_pattern OR name_en ILIKE $name_pattern)"]
+        params = {"name_pattern": f"%{name}%", "exact_name": name, "limit": limit}
+
+        if category:
+            conditions.append("category = $category")
+            params["category"] = category
+
+        where = " AND ".join(conditions)
+
+        query = f"""
+            SELECT id, COALESCE(name_en, name) as display_name,
+                   category, geom_wkb
+            FROM places
+            WHERE {where}
+            ORDER BY
+                CASE WHEN name = $exact_name OR name_en = $exact_name THEN 0
+                     WHEN name ILIKE $exact_name OR name_en ILIKE $exact_name THEN 1
+                     ELSE 2 END
+            LIMIT $limit
+        """
+
+        rows = self.places_con.execute(query, params).fetchall()
+        results = []
+        for row in rows:
+            geom = None
+            if row[3] is not None:
+                try:
+                    geom = wkb.loads(bytes(row[3]))
+                except Exception:
+                    logger.warning("Failed to parse WKB for place %s", row[0], exc_info=True)
+
+            results.append(Feature(
+                id=row[0],
+                name=row[1],
+                source="place",
+                feature_class=row[2] or "unknown",
+                geometry=geom,
+                geom_type="Point",
+                is_point=True,
+            ))
+        return results
+
     def get_subtypes(self) -> list[str]:
         rows = self.con.execute(
             "SELECT DISTINCT subtype FROM divisions ORDER BY subtype"
@@ -122,3 +264,7 @@ class PlaceDB:
 
     def close(self):
         self.con.close()
+        if self.features_con:
+            self.features_con.close()
+        if self.places_con:
+            self.places_con.close()

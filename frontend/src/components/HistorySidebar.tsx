@@ -15,7 +15,7 @@ interface Props {
 
 export default function HistorySidebar({ history, onSelect, isOpen, onToggle }: Props) {
   return (
-    <>
+    <div className="relative">
       <button
         onClick={onToggle}
         className="glass w-9 h-9 flex items-center justify-center text-neutral-400 hover:text-white transition-colors text-sm"
@@ -24,7 +24,7 @@ export default function HistorySidebar({ history, onSelect, isOpen, onToggle }: 
         H
       </button>
       {isOpen && history.length > 0 && (
-        <div className="glass p-3 w-64 max-h-80 overflow-y-auto mt-2">
+        <div className="absolute top-full right-0 glass p-3 w-64 max-h-80 overflow-y-auto mt-2">
           <div className="text-xs text-neutral-500 uppercase tracking-wider mb-2">History</div>
           <ul className="space-y-1">
             {history.map((entry, i) => (
@@ -40,7 +40,7 @@ export default function HistorySidebar({ history, onSelect, isOpen, onToggle }: 
           </ul>
         </div>
       )}
-    </>
+    </div>
   );
 }
 

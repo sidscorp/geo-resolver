@@ -8,15 +8,21 @@ export interface ResolveResult {
 }
 
 export interface StepInfo {
-  tool: string;
-  args: Record<string, unknown>;
+  tool?: string;
+  args?: Record<string, unknown>;
+  message?: string;
+  type?: string;
 }
 
-export async function resolveSync(query: string): Promise<ResolveResult> {
+export async function resolveSync(
+  query: string,
+  signal?: AbortSignal,
+): Promise<ResolveResult> {
   const res = await fetch("/api/resolve", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query }),
+    signal,
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -25,58 +31,59 @@ export async function resolveSync(query: string): Promise<ResolveResult> {
   return res.json();
 }
 
-export function resolveStream(
+export async function resolveStream(
   query: string,
   onStep: (step: StepInfo) => void,
-  onResult: (result: ResolveResult) => void,
-  onError: (error: string) => void,
-): () => void {
-  const ctrl = new AbortController();
+  signal?: AbortSignal,
+): Promise<ResolveResult> {
+  const res = await fetch("/api/resolve/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+    signal,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Resolution failed");
+  }
 
-  (async () => {
-    try {
-      const res = await fetch("/api/resolve/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
-        signal: ctrl.signal,
-      });
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result: ResolveResult | null = null;
+  let errorMsg: string | null = null;
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        onError(err.detail || "Resolution failed");
-        return;
+  const parseEvents = () => {
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop()!;
+    for (const part of parts) {
+      let eventType = "message";
+      let data = "";
+      for (const line of part.split("\n")) {
+        if (line.startsWith("event:")) eventType = line.slice(6).trim();
+        else if (line.startsWith("data:")) data = line.slice(5).trim();
       }
-
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        let eventType = "";
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith("data: ")) {
-            const data = JSON.parse(line.slice(6));
-            if (eventType === "step") onStep(data);
-            else if (eventType === "result") onResult(data);
-            else if (eventType === "error") onError(data);
-          }
-        }
-      }
-    } catch (e: unknown) {
-      if (e instanceof DOMException && e.name === "AbortError") return;
-      onError(e instanceof Error ? e.message : "Stream failed");
+      if (!data) continue;
+      if (eventType === "step") onStep(JSON.parse(data));
+      else if (eventType === "result") result = JSON.parse(data);
+      else if (eventType === "error") errorMsg = JSON.parse(data);
     }
-  })();
+  };
 
-  return () => ctrl.abort();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: true });
+    if (done) buffer += decoder.decode();
+    parseEvents();
+    if (done) break;
+  }
+
+  if (buffer.trim()) {
+    buffer += "\n\n";
+    parseEvents();
+  }
+
+  if (errorMsg) throw new Error(errorMsg);
+  if (!result) throw new Error("Stream ended without a result");
+  return result;
 }

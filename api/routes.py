@@ -2,10 +2,15 @@ import json
 import threading
 
 from fastapi import APIRouter, HTTPException
+from shapely.geometry import mapping
 from sse_starlette.sse import EventSourceResponse
 
 from .schemas import ResolveRequest, ResolveResponse
 from .dependencies import get_resolver
+
+SIMPLIFY_TOLERANCE = 0.001
+
+_resolve_semaphore = threading.Semaphore(3)
 
 router = APIRouter(prefix="/api")
 
@@ -17,14 +22,26 @@ def health():
 
 @router.post("/resolve", response_model=ResolveResponse)
 def resolve(req: ResolveRequest):
-    resolver = get_resolver()
+    if not _resolve_semaphore.acquire(timeout=5):
+        raise HTTPException(status_code=429, detail="Too many concurrent requests, try again shortly")
     try:
+        resolver = get_resolver()
         result = resolver.resolve(req.query)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _resolve_semaphore.release()
+    simplified = result.geometry.simplify(SIMPLIFY_TOLERANCE, preserve_topology=True)
+    geojson = {
+        "type": "Feature",
+        "properties": {"query": result.query},
+        "geometry": mapping(simplified),
+    }
     return ResolveResponse(
         query=result.query,
-        geojson=result.geojson,
+        geojson=geojson,
         bounds=list(result.bounds),
         area_km2=result.area_km2,
         geometry_type=result.geometry.geom_type,
@@ -44,11 +61,20 @@ async def resolve_stream(req: ResolveRequest):
         q.put(("step", step))
 
     def run():
+        if not _resolve_semaphore.acquire(timeout=5):
+            q.put(("error", "Too many concurrent requests, try again shortly"))
+            return
         try:
             result = resolver.resolve(req.query, on_step=on_step)
+            simplified = result.geometry.simplify(SIMPLIFY_TOLERANCE, preserve_topology=True)
+            geojson = {
+                "type": "Feature",
+                "properties": {"query": result.query},
+                "geometry": mapping(simplified),
+            }
             q.put(("result", {
                 "query": result.query,
-                "geojson": result.geojson,
+                "geojson": geojson,
                 "bounds": list(result.bounds),
                 "area_km2": result.area_km2,
                 "geometry_type": result.geometry.geom_type,
@@ -56,6 +82,8 @@ async def resolve_stream(req: ResolveRequest):
             }))
         except Exception as e:
             q.put(("error", str(e)))
+        finally:
+            _resolve_semaphore.release()
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
@@ -75,4 +103,4 @@ async def resolve_stream(req: ResolveRequest):
             if event_type in ("result", "error"):
                 break
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(event_generator(), ping=15)

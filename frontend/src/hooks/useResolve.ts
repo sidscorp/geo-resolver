@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import { resolveStream, resolveSync } from "../lib/api";
+import { resolveStream } from "../lib/api";
 import type { StepInfo } from "../lib/api";
 
 export interface ResolveState {
@@ -25,10 +25,12 @@ export function useResolve() {
     query: null,
   });
 
-  const cancelRef = useRef<(() => void) | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const resolve = useCallback((query: string) => {
-    if (cancelRef.current) cancelRef.current();
+    if (abortRef.current) abortRef.current.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
 
     setState({
       geojson: null,
@@ -41,12 +43,16 @@ export function useResolve() {
       query,
     });
 
-    const cancel = resolveStream(
+    resolveStream(
       query,
       (step) => {
+        if (ctrl.signal.aborted) return;
         setState((s) => ({ ...s, steps: [...s.steps, step] }));
       },
-      (result) => {
+      ctrl.signal,
+    )
+      .then((result) => {
+        if (ctrl.signal.aborted) return;
         setState({
           geojson: result.geojson,
           bounds: result.bounds,
@@ -57,33 +63,15 @@ export function useResolve() {
           error: null,
           query: result.query,
         });
-      },
-      (error) => {
-        // Fallback to sync
-        resolveSync(query)
-          .then((result) => {
-            setState({
-              geojson: result.geojson,
-              bounds: result.bounds,
-              area_km2: result.area_km2,
-              geometry_type: result.geometry_type,
-              steps: result.steps,
-              isLoading: false,
-              error: null,
-              query: result.query,
-            });
-          })
-          .catch((e) => {
-            setState((s) => ({
-              ...s,
-              isLoading: false,
-              error: e.message || error,
-            }));
-          });
-      },
-    );
-
-    cancelRef.current = cancel;
+      })
+      .catch((e) => {
+        if (ctrl.signal.aborted) return;
+        setState((s) => ({
+          ...s,
+          isLoading: false,
+          error: e.message || "Resolution failed",
+        }));
+      });
   }, []);
 
   return { ...state, resolve };

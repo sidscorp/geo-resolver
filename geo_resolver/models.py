@@ -26,6 +26,30 @@ class Place:
 
 
 @dataclass
+class Feature:
+    id: str
+    name: str
+    source: str  # "land", "water", "land_use", "place"
+    feature_class: str  # "lake", "island", "park", "museum", etc.
+    geometry: Geometry | None
+    geom_type: str | None = None  # "Polygon", "LineString", "Point", etc.
+    is_point: bool = False
+
+    def to_dict(self) -> dict:
+        d = {
+            "id": self.id,
+            "name": self.name,
+            "source": self.source,
+            "feature_class": self.feature_class,
+            "has_geometry": self.geometry is not None,
+            "is_point": self.is_point,
+        }
+        if self.geom_type:
+            d["geom_type"] = self.geom_type
+        return d
+
+
+@dataclass
 class ResolverResult:
     query: str
     geometry: Geometry

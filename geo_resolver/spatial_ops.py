@@ -1,7 +1,6 @@
-import math
+from pyproj import Transformer
 from shapely import Geometry
-from shapely.ops import unary_union
-from shapely.affinity import translate
+from shapely.ops import unary_union, transform
 from shapely.geometry import box
 
 
@@ -17,9 +16,19 @@ def difference(a: Geometry, b: Geometry) -> Geometry:
     return a.difference(b)
 
 
+def _utm_epsg(lon: float, lat: float) -> int:
+    zone = int((lon + 180) / 6) + 1
+    return 32600 + zone if lat >= 0 else 32700 + zone
+
+
 def buffer_km(geometry: Geometry, distance_km: float) -> Geometry:
-    deg = distance_km / 111.0
-    return geometry.buffer(deg)
+    centroid = geometry.centroid
+    epsg = _utm_epsg(centroid.x, centroid.y)
+    to_utm = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True).transform
+    to_wgs = Transformer.from_crs(f"EPSG:{epsg}", "EPSG:4326", always_xy=True).transform
+    projected = transform(to_utm, geometry)
+    buffered = projected.buffer(distance_km * 1000)
+    return transform(to_wgs, buffered)
 
 
 def directional_subset(geometry: Geometry, direction: str) -> Geometry:
