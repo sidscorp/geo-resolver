@@ -49,7 +49,7 @@ class PlaceDB:
             FROM divisions
             WHERE (name = $ctx OR name_en = $ctx)
             AND subtype IN ('country', 'region')
-            ORDER BY CASE subtype WHEN 'country' THEN 0 ELSE 1 END
+            ORDER BY CASE subtype WHEN 'region' THEN 0 ELSE 1 END
             LIMIT 1
         """, {"ctx": context}).fetchone()
 
@@ -61,16 +61,22 @@ class PlaceDB:
             return country, None
         return country, region
 
-    def search_places(
+    def _search_divisions(
         self,
         name: str,
-        place_type: str | None = None,
-        context: str | None = None,
-        limit: int = 5,
-    ) -> list[Place]:
-        """Search administrative divisions by name, with optional type and context filters."""
-        conditions = ["(name ILIKE $name_pattern OR name_en ILIKE $name_pattern)"]
-        params = {"name_pattern": f"%{name}%"}
+        place_type: str | None,
+        context: str | None,
+        limit: int,
+        use_ilike: bool,
+    ) -> list[tuple]:
+        """Run a division search query, either exact-match or ILIKE."""
+        if use_ilike:
+            name_cond = "(name ILIKE $name_pattern OR name_en ILIKE $name_pattern)"
+        else:
+            name_cond = "(name = $exact_name OR name_en = $exact_name)"
+
+        conditions = [name_cond]
+        params = {"name_pattern": f"%{name}%", "exact_name": name, "limit": limit}
 
         if place_type:
             conditions.append("subtype = $place_type")
@@ -89,9 +95,8 @@ class PlaceDB:
                 params["ctx"] = f"%{context}%"
 
         where = " AND ".join(conditions)
-        params["exact_name"] = name
 
-        id_query = f"""
+        query = f"""
             SELECT id, COALESCE(name_en, name) as display_name, subtype, country, region
             FROM divisions
             WHERE {where}
@@ -106,9 +111,19 @@ class PlaceDB:
                     WHEN 'neighborhood' THEN 6 ELSE 7 END
             LIMIT $limit
         """
-        params["limit"] = limit
+        return self.con.execute(query, params).fetchall()
 
-        rows = self.con.execute(id_query, params).fetchall()
+    def search_places(
+        self,
+        name: str,
+        place_type: str | None = None,
+        context: str | None = None,
+        limit: int = 5,
+    ) -> list[Place]:
+        """Search administrative divisions by name, with optional type and context filters."""
+        rows = self._search_divisions(name, place_type, context, limit, use_ilike=False)
+        if not rows:
+            rows = self._search_divisions(name, place_type, context, limit, use_ilike=True)
         if not rows:
             return []
 
@@ -138,25 +153,22 @@ class PlaceDB:
             ))
         return results
 
-    def _search_feature_table(
+    def _run_feature_query(
         self,
         table: str,
-        source: str,
+        class_column: str,
         name: str,
-        class_column: str = "class",
-        class_value: str | None = None,
-        limit: int = 5,
-    ) -> list[Feature]:
-        """Generic search across feature tables (land, water, land_use)."""
-        if table not in _VALID_FEATURE_TABLES:
-            raise ValueError(f"Invalid feature table: {table!r}")
-        if class_column not in _VALID_COLUMNS:
-            raise ValueError(f"Invalid column name: {class_column!r}")
+        class_value: str | None,
+        limit: int,
+        use_ilike: bool,
+    ) -> list[tuple]:
+        """Run a feature search query, either exact-match or ILIKE."""
+        if use_ilike:
+            name_cond = "(name ILIKE $name_pattern OR name_en ILIKE $name_pattern)"
+        else:
+            name_cond = "(name = $exact_name OR name_en = $exact_name)"
 
-        if self.features_con is None:
-            return []
-
-        conditions = ["(name ILIKE $name_pattern OR name_en ILIKE $name_pattern)"]
+        conditions = [name_cond]
         params = {"name_pattern": f"%{name}%", "exact_name": name, "limit": limit}
 
         if class_value:
@@ -176,8 +188,30 @@ class PlaceDB:
                      ELSE 2 END
             LIMIT $limit
         """
+        return self.features_con.execute(query, params).fetchall()
 
-        rows = self.features_con.execute(query, params).fetchall()
+    def _search_feature_table(
+        self,
+        table: str,
+        source: str,
+        name: str,
+        class_column: str = "class",
+        class_value: str | None = None,
+        limit: int = 5,
+    ) -> list[Feature]:
+        """Generic search across feature tables (land, water, land_use)."""
+        if table not in _VALID_FEATURE_TABLES:
+            raise ValueError(f"Invalid feature table: {table!r}")
+        if class_column not in _VALID_COLUMNS:
+            raise ValueError(f"Invalid column name: {class_column!r}")
+
+        if self.features_con is None:
+            return []
+
+        rows = self._run_feature_query(table, class_column, name, class_value, limit, use_ilike=False)
+        if not rows:
+            rows = self._run_feature_query(table, class_column, name, class_value, limit, use_ilike=True)
+
         results = []
         for row in rows:
             geom = None
@@ -224,14 +258,20 @@ class PlaceDB:
             class_column="subtype", class_value=subtype, limit=limit,
         )
 
-    def search_pois(
-        self, name: str, category: str | None = None, limit: int = 5
-    ) -> list[Feature]:
-        """Search POIs. Always returns is_point=True."""
-        if self.places_con is None:
-            return []
+    def _run_pois_query(
+        self,
+        name: str,
+        category: str | None,
+        limit: int,
+        use_ilike: bool,
+    ) -> list[tuple]:
+        """Run a POI search query, either exact-match or ILIKE."""
+        if use_ilike:
+            name_cond = "(name ILIKE $name_pattern OR name_en ILIKE $name_pattern)"
+        else:
+            name_cond = "(name = $exact_name OR name_en = $exact_name)"
 
-        conditions = ["(name ILIKE $name_pattern OR name_en ILIKE $name_pattern)"]
+        conditions = [name_cond]
         params = {"name_pattern": f"%{name}%", "exact_name": name, "limit": limit}
 
         if category:
@@ -251,8 +291,18 @@ class PlaceDB:
                      ELSE 2 END
             LIMIT $limit
         """
+        return self.places_con.execute(query, params).fetchall()
 
-        rows = self.places_con.execute(query, params).fetchall()
+    def search_pois(
+        self, name: str, category: str | None = None, limit: int = 5
+    ) -> list[Feature]:
+        """Search POIs. Always returns is_point=True."""
+        if self.places_con is None:
+            return []
+
+        rows = self._run_pois_query(name, category, limit, use_ilike=False)
+        if not rows:
+            rows = self._run_pois_query(name, category, limit, use_ilike=True)
         results = []
         for row in rows:
             geom = None

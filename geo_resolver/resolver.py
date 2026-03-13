@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from collections.abc import Callable
 from litellm import OpenAI
 from .db import PlaceDB
 from .tools import ToolExecutor, TOOL_DEFINITIONS
@@ -73,7 +74,7 @@ def _describe_places(args: dict) -> str:
     return " ".join(parts) + "..."
 
 
-_STEP_DISPATCH: dict[str, callable] = {
+_STEP_DISPATCH: dict[str, Callable] = {
     "search_places": _describe_places,
     "search_land_features": lambda a: _search_description("land features", a, "feature_class"),
     "search_water_features": lambda a: _search_description("water features", a, "feature_class"),
