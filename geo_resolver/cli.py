@@ -32,18 +32,23 @@ def _cmd_resolve(args):
 
 
 def _cmd_download_data(args):
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     from .data.download import download, THEMES
     themes = args.theme if args.theme else None
     download(themes, release=args.release)
 
 
 def _cmd_build_db(args):
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logger = logging.getLogger(__name__)
     from .data.build import BUILDERS
     sources = args.source if args.source else ["divisions"]
     for source in sources:
-        print(f"\n=== Building {source} ===")
+        logger.info("\n=== Building %s ===", source)
         BUILDERS[source]()
-    print("\nDone!")
+    logger.info("\nDone!")
 
 
 def build_parser() -> argparse.ArgumentParser:
