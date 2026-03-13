@@ -1,7 +1,10 @@
 """Download Overture Maps data to local parquet files."""
 
+import logging
 import os
 import duckdb
+
+logger = logging.getLogger(__name__)
 
 DATA_DIR = os.environ.get("GEO_RESOLVER_DATA_DIR", os.path.expanduser("~/.geo-resolver/data"))
 DEFAULT_RELEASE = "2026-02-18.0"
@@ -45,19 +48,19 @@ def download(themes: list[str] | None = None, release: str = DEFAULT_RELEASE):
 
     for name in to_download:
         if name not in THEMES:
-            print(f"  Unknown theme: {name} (available: {', '.join(THEMES.keys())})")
+            logger.warning("Unknown theme: %s (available: %s)", name, ", ".join(THEMES.keys()))
             continue
 
         theme = THEMES[name]
         outfile = os.path.join(DATA_DIR, f"{name}.parquet")
         if os.path.exists(outfile):
-            print(f"  {outfile} already exists, skipping")
+            logger.info("%s already exists, skipping", outfile)
             continue
 
         s3_path = f"{s3_base}/{theme['s3']}/*"
         where = f"WHERE {theme['filter']}" if theme["filter"] else ""
 
-        print(f"  Downloading {name}... (this may take a while)")
+        logger.info("Downloading %s... (this may take a while)", name)
         con.execute(f"""
             COPY (
                 SELECT * FROM read_parquet('{s3_path}', filename=true, hive_partitioning=1)
@@ -65,7 +68,7 @@ def download(themes: list[str] | None = None, release: str = DEFAULT_RELEASE):
             ) TO '{outfile}' (FORMAT PARQUET)
         """)
         size_mb = os.path.getsize(outfile) / (1024 * 1024)
-        print(f"  Saved {outfile} ({size_mb:.0f} MB)")
+        logger.info("Saved %s (%.0f MB)", outfile, size_mb)
 
     con.close()
-    print("Done!")
+    logger.info("Download complete")

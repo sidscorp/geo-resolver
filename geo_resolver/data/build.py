@@ -1,7 +1,10 @@
 """Convert downloaded parquet files into indexed DuckDB databases."""
 
+import logging
 import os
 import duckdb
+
+logger = logging.getLogger(__name__)
 
 DATA_DIR = os.environ.get("GEO_RESOLVER_DATA_DIR", os.path.expanduser("~/.geo-resolver/data"))
 
@@ -14,7 +17,7 @@ def build_divisions():
 
     for f in [division_path, division_area_path]:
         if not os.path.exists(f):
-            print(f"  Missing {f}, skipping divisions build")
+            logger.warning("Missing %s, skipping divisions build", f)
             return
 
     if os.path.exists(db_path):
@@ -23,7 +26,7 @@ def build_divisions():
     con = duckdb.connect(db_path)
     con.execute("INSTALL spatial; LOAD spatial;")
 
-    print("Importing divisions...")
+    logger.info("Importing divisions...")
     con.execute(f"""
         CREATE TABLE divisions AS
         SELECT
@@ -36,15 +39,15 @@ def build_divisions():
         FROM read_parquet('{division_path}')
     """)
     count = con.execute("SELECT count(*) FROM divisions").fetchone()[0]
-    print(f"  {count} divisions")
+    logger.info("  %d divisions", count)
 
-    print("Creating division indexes...")
+    logger.info("Creating division indexes...")
     con.execute("CREATE INDEX idx_div_name ON divisions(name)")
     con.execute("CREATE INDEX idx_div_name_en ON divisions(name_en)")
     con.execute("CREATE INDEX idx_div_subtype ON divisions(subtype)")
     con.execute("CREATE INDEX idx_div_country ON divisions(country)")
 
-    print("Importing division areas (land only)...")
+    logger.info("Importing division areas (land only)...")
     con.execute(f"""
         CREATE TABLE division_areas AS
         SELECT
@@ -54,13 +57,13 @@ def build_divisions():
         WHERE is_land = true
     """)
     count = con.execute("SELECT count(*) FROM division_areas").fetchone()[0]
-    print(f"  {count} division areas")
+    logger.info("  %d division areas", count)
 
-    print("Creating area indexes...")
+    logger.info("Creating area indexes...")
     con.execute("CREATE INDEX idx_area_divid ON division_areas(division_id)")
 
     db_size = os.path.getsize(db_path) / (1024 * 1024)
-    print(f"Database: {db_path} ({db_size:.0f} MB)")
+    logger.info("Database: %s (%.0f MB)", db_path, db_size)
     con.close()
 
 
@@ -78,7 +81,7 @@ def build_features():
 
     land_path = os.path.join(DATA_DIR, "land.parquet")
     if os.path.exists(land_path):
-        print("Importing land features...")
+        logger.info("Importing land features...")
         con.execute(f"""
             CREATE TABLE land_features AS
             SELECT
@@ -91,17 +94,17 @@ def build_features():
             FROM read_parquet('{land_path}')
         """)
         count = con.execute("SELECT count(*) FROM land_features").fetchone()[0]
-        print(f"  {count} land features")
+        logger.info("  %d land features", count)
         con.execute("CREATE INDEX idx_land_name ON land_features(name)")
         con.execute("CREATE INDEX idx_land_name_en ON land_features(name_en)")
         con.execute("CREATE INDEX idx_land_class ON land_features(class)")
         tables_built += 1
     else:
-        print(f"  Missing {land_path}, skipping land features")
+        logger.warning("Missing %s, skipping land features", land_path)
 
     water_path = os.path.join(DATA_DIR, "water.parquet")
     if os.path.exists(water_path):
-        print("Importing water features...")
+        logger.info("Importing water features...")
         con.execute(f"""
             CREATE TABLE water_features AS
             SELECT
@@ -114,17 +117,17 @@ def build_features():
             FROM read_parquet('{water_path}')
         """)
         count = con.execute("SELECT count(*) FROM water_features").fetchone()[0]
-        print(f"  {count} water features")
+        logger.info("  %d water features", count)
         con.execute("CREATE INDEX idx_water_name ON water_features(name)")
         con.execute("CREATE INDEX idx_water_name_en ON water_features(name_en)")
         con.execute("CREATE INDEX idx_water_class ON water_features(class)")
         tables_built += 1
     else:
-        print(f"  Missing {water_path}, skipping water features")
+        logger.warning("Missing %s, skipping water features", water_path)
 
     land_use_path = os.path.join(DATA_DIR, "land_use.parquet")
     if os.path.exists(land_use_path):
-        print("Importing land use features...")
+        logger.info("Importing land use features...")
         con.execute(f"""
             CREATE TABLE land_use_features AS
             SELECT
@@ -138,22 +141,22 @@ def build_features():
             FROM read_parquet('{land_use_path}')
         """)
         count = con.execute("SELECT count(*) FROM land_use_features").fetchone()[0]
-        print(f"  {count} land use features")
+        logger.info("  %d land use features", count)
         con.execute("CREATE INDEX idx_lu_name ON land_use_features(name)")
         con.execute("CREATE INDEX idx_lu_name_en ON land_use_features(name_en)")
         con.execute("CREATE INDEX idx_lu_subtype ON land_use_features(subtype)")
         tables_built += 1
     else:
-        print(f"  Missing {land_use_path}, skipping land use features")
+        logger.warning("Missing %s, skipping land use features", land_use_path)
 
     if tables_built == 0:
         con.close()
         os.remove(db_path)
-        print("No feature parquets found, skipping features.duckdb")
+        logger.warning("No feature parquets found, skipping features.duckdb")
         return
 
     db_size = os.path.getsize(db_path) / (1024 * 1024)
-    print(f"Database: {db_path} ({db_size:.0f} MB)")
+    logger.info("Database: %s (%.0f MB)", db_path, db_size)
     con.close()
 
 
@@ -163,7 +166,7 @@ def build_places():
     place_path = os.path.join(DATA_DIR, "place.parquet")
 
     if not os.path.exists(place_path):
-        print(f"  Missing {place_path}, skipping places build")
+        logger.warning("Missing %s, skipping places build", place_path)
         return
 
     if os.path.exists(db_path):
@@ -172,7 +175,7 @@ def build_places():
     con = duckdb.connect(db_path)
     con.execute("INSTALL spatial; LOAD spatial;")
 
-    print("Importing places (POIs)...")
+    logger.info("Importing places (POIs)...")
     con.execute(f"""
         CREATE TABLE places AS
         SELECT
@@ -184,15 +187,15 @@ def build_places():
         FROM read_parquet('{place_path}')
     """)
     count = con.execute("SELECT count(*) FROM places").fetchone()[0]
-    print(f"  {count} places")
+    logger.info("  %d places", count)
 
-    print("Creating place indexes...")
+    logger.info("Creating place indexes...")
     con.execute("CREATE INDEX idx_place_name ON places(name)")
     con.execute("CREATE INDEX idx_place_name_en ON places(name_en)")
     con.execute("CREATE INDEX idx_place_category ON places(category)")
 
     db_size = os.path.getsize(db_path) / (1024 * 1024)
-    print(f"Database: {db_path} ({db_size:.0f} MB)")
+    logger.info("Database: %s (%.0f MB)", db_path, db_size)
     con.close()
 
 
