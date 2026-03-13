@@ -64,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_parser.add_argument("query", help="Geographic query (e.g. 'Bay Area')")
     resolve_parser.add_argument("-o", "--output", help="Output file path (.geojson)")
     resolve_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output")
-    resolve_parser.add_argument("--model", default=None, help="LLM model (litellm format)")
+    resolve_parser.add_argument("--model", default=None, help="LLM model name")
     resolve_parser.add_argument("--api-key", default=None, help="LLM API key")
     resolve_parser.add_argument("--base-url", default=None, help="LLM API base URL")
     resolve_parser.add_argument("--data-dir", default=None, help="Path to data directory")

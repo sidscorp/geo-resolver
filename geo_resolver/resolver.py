@@ -3,7 +3,7 @@ import json
 import logging
 import os
 from collections.abc import Callable
-from litellm import OpenAI
+from openai import OpenAI
 from .db import PlaceDB
 from .tools import ToolExecutor, TOOL_DEFINITIONS
 from .models import ResolverResult, TokenUsage
