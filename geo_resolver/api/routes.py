@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 
 from fastapi import APIRouter, HTTPException
 from shapely.geometry import mapping
@@ -25,6 +26,8 @@ def health():
 
 @router.post("/resolve", response_model=ResolveResponse)
 def resolve(req: ResolveRequest):
+    logger.info("Resolve request: %s", req.query)
+    t0 = time.monotonic()
     if not _resolve_semaphore.acquire(timeout=5):
         raise HTTPException(status_code=429, detail="Too many concurrent requests, try again shortly")
     try:
@@ -37,6 +40,11 @@ def resolve(req: ResolveRequest):
         raise HTTPException(status_code=500, detail="Internal server error")
     finally:
         _resolve_semaphore.release()
+    latency = time.monotonic() - t0
+    logger.info(
+        "Resolve complete: query=%r area_km2=%.1f steps=%d latency=%.2fs",
+        req.query, result.area_km2, len(result.steps), latency,
+    )
     simplified = result.geometry.simplify(req.simplify_tolerance, preserve_topology=True)
     geojson = {
         "type": "Feature",

@@ -25,7 +25,12 @@ def _utm_epsg(lon: float, lat: float) -> int:
 
 
 def buffer_km(geometry: Geometry, distance_km: float) -> Geometry:
-    """Buffer *geometry* by *distance_km* kilometres using a local UTM projection."""
+    """Buffer *geometry* by *distance_km* kilometres using a local UTM projection.
+
+    Note: the UTM zone is determined from the geometry centroid. For geometries
+    spanning more than ~6 degrees of longitude, the single-zone projection may
+    introduce distortion at the edges.
+    """
     centroid = geometry.centroid
     epsg = _utm_epsg(centroid.x, centroid.y)
     to_utm = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True).transform

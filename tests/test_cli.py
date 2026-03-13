@@ -1,4 +1,13 @@
+import pytest
+
 from geo_resolver.cli import build_parser
+
+
+def test_version_flag():
+    parser = build_parser()
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["--version"])
+    assert exc_info.value.code == 0
 
 
 def test_resolve_subcommand_parsing():

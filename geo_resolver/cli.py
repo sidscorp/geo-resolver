@@ -2,6 +2,7 @@ import argparse
 import json
 import sys
 
+from . import __version__
 from .resolver import GeoResolver
 
 
@@ -50,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="geo-resolve",
         description="Resolve natural language geographic queries to GeoJSON",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command")
 
     # resolve subcommand
