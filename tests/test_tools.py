@@ -123,6 +123,16 @@ def test_difference_empty_warning(mock_db):
     assert result["warning"] == "result geometry is empty"
 
 
+def test_finalize_clears_intermediate_geometries(mock_db):
+    ex = ToolExecutor(mock_db)
+    ex.geometries["g1"] = box(0, 0, 1, 1)
+    ex.geometries["g2"] = box(1, 1, 2, 2)
+    ex.geometries["g3"] = box(2, 2, 3, 3)
+    ex._counter = 3
+    ex.execute("finalize", {"geometry_id": "g2"})
+    assert list(ex.geometries.keys()) == ["g2"]
+
+
 def test_unknown_tool(mock_db):
     ex = ToolExecutor(mock_db)
     raw = ex.execute("nonexistent_tool", {})

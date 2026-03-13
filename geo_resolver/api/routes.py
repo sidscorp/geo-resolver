@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import threading
 
 from fastapi import APIRouter, HTTPException
@@ -8,6 +9,8 @@ from sse_starlette.sse import EventSourceResponse
 
 from .schemas import ResolveRequest, ResolveResponse
 from .dependencies import get_resolver
+
+logger = logging.getLogger(__name__)
 
 _resolve_semaphore = threading.Semaphore(3)
 
@@ -28,8 +31,9 @@ def resolve(req: ResolveRequest):
         result = resolver.resolve(req.query)
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Resolve failed for query: %s", req.query)
+        raise HTTPException(status_code=500, detail="Internal server error")
     finally:
         _resolve_semaphore.release()
     simplified = result.geometry.simplify(req.simplify_tolerance, preserve_topology=True)
@@ -51,7 +55,7 @@ def resolve(req: ResolveRequest):
 @router.post("/resolve/stream")
 async def resolve_stream(req: ResolveRequest):
     resolver = get_resolver()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     q: asyncio.Queue = asyncio.Queue()
 
     def on_step(step: dict):
@@ -77,8 +81,9 @@ async def resolve_stream(req: ResolveRequest):
                 "geometry_type": result.geometry.geom_type,
                 "steps": result.steps,
             }))
-        except Exception as e:
-            loop.call_soon_threadsafe(q.put_nowait, ("error", str(e)))
+        except Exception:
+            logger.exception("Streaming resolve failed for query: %s", req.query)
+            loop.call_soon_threadsafe(q.put_nowait, ("error", "Internal server error"))
         finally:
             _resolve_semaphore.release()
 

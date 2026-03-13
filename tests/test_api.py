@@ -50,6 +50,17 @@ def test_resolve_empty_query(client):
     assert resp.status_code == 422
 
 
+def test_resolve_500_hides_exception_details(client):
+    bad_resolver = MagicMock()
+    bad_resolver.resolve.side_effect = RuntimeError("secret database credentials xyz")
+
+    with patch("geo_resolver.api.routes.get_resolver", return_value=bad_resolver):
+        resp = client.post("/api/resolve", json={"query": "test query"})
+    assert resp.status_code == 500
+    assert "secret" not in resp.text
+    assert "Internal server error" in resp.json()["detail"]
+
+
 def test_resolve_stream(client, mock_resolver):
     with patch("geo_resolver.api.routes.get_resolver", return_value=mock_resolver):
         resp = client.post("/api/resolve/stream", json={"query": "test query"})

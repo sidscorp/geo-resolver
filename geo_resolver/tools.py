@@ -385,6 +385,7 @@ class ToolExecutor:
     def _finalize(self, geometry_id: str) -> str:
         self.final_id = geometry_id
         geom = self._get(geometry_id)
+        self.geometries = {geometry_id: geom}
         return json.dumps({
             "status": "finalized",
             "geometry_id": geometry_id,
