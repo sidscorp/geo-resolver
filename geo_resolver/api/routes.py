@@ -12,6 +12,7 @@ from .dependencies import get_resolver
 
 logger = logging.getLogger(__name__)
 
+RESOLVE_TIMEOUT_SECONDS = 300
 _resolve_semaphore = threading.Semaphore(3)
 
 router = APIRouter(prefix="/api")
@@ -92,7 +93,13 @@ async def resolve_stream(req: ResolveRequest):
 
     async def event_generator():
         while True:
-            event_type, data = await q.get()
+            try:
+                event_type, data = await asyncio.wait_for(
+                    q.get(), timeout=RESOLVE_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                yield {"event": "error", "data": json.dumps("Resolve timed out")}
+                break
             yield {"event": event_type, "data": json.dumps(data)}
             if event_type in ("result", "error"):
                 break
