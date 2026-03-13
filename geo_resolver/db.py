@@ -76,7 +76,9 @@ class PlaceDB:
             name_cond = "(name = $exact_name OR name_en = $exact_name)"
 
         conditions = [name_cond]
-        params = {"name_pattern": f"%{name}%", "exact_name": name, "limit": limit}
+        params: dict[str, object] = {"exact_name": name, "limit": limit}
+        if use_ilike:
+            params["name_pattern"] = f"%{name}%"
 
         if place_type:
             conditions.append("subtype = $place_type")
@@ -169,7 +171,9 @@ class PlaceDB:
             name_cond = "(name = $exact_name OR name_en = $exact_name)"
 
         conditions = [name_cond]
-        params = {"name_pattern": f"%{name}%", "exact_name": name, "limit": limit}
+        params: dict[str, object] = {"exact_name": name, "limit": limit}
+        if use_ilike:
+            params["name_pattern"] = f"%{name}%"
 
         if class_value:
             conditions.append(f"{class_column} = $class_value")
@@ -272,7 +276,9 @@ class PlaceDB:
             name_cond = "(name = $exact_name OR name_en = $exact_name)"
 
         conditions = [name_cond]
-        params = {"name_pattern": f"%{name}%", "exact_name": name, "limit": limit}
+        params: dict[str, object] = {"exact_name": name, "limit": limit}
+        if use_ilike:
+            params["name_pattern"] = f"%{name}%"
 
         if category:
             conditions.append("category = $category")
