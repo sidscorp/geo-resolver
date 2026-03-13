@@ -20,15 +20,15 @@ classifiers = [
     "Topic :: Scientific/Engineering :: GIS",
 ]
 dependencies = [
-    "duckdb>=1.1.0",
-    "shapely>=2.0",
-    "pyproj>=3.6",
-    "litellm>=1.0",
-    "python-dotenv>=1.0",
+    "duckdb>=1.1.0,<2.0",
+    "shapely>=2.0,<3.0",
+    "pyproj>=3.6,<4.0",
+    "litellm>=1.0,<2.0",
+    "python-dotenv>=1.0,<2.0",
 ]
 
 [project.optional-dependencies]
-api = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "sse-starlette>=2.0"]
+api = ["fastapi>=0.110,<1.0", "uvicorn[standard]>=0.27,<1.0", "sse-starlette>=2.0,<3.0"]
 dev = ["pytest", "httpx", "ipython"]
 
 [project.urls]

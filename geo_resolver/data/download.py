@@ -3,7 +3,7 @@
 import os
 import duckdb
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
+DATA_DIR = os.environ.get("GEO_RESOLVER_DATA_DIR", os.path.expanduser("~/.geo-resolver/data"))
 DEFAULT_RELEASE = "2026-02-18.0"
 
 THEMES = {

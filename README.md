@@ -22,16 +22,16 @@ geo-resolver uses [Overture Maps](https://overturemaps.org/) data stored in loca
 
 ```bash
 # Download division boundaries (required)
-python scripts/download_data.py
+geo-resolve download-data
 
 # Download additional themes (land, water, land_use, POIs)
-python scripts/download_data.py --theme land water land_use place
+geo-resolve download-data --theme land water land_use place
 
 # Build indexed DuckDB databases
-python scripts/build_db.py --source features places
+geo-resolve build-db --source features places
 ```
 
-By default, data is stored in `./data/`. Set `GEO_RESOLVER_DATA_DIR` to use a different location.
+By default, data is stored in `~/.geo-resolver/data/`. Set `GEO_RESOLVER_DATA_DIR` to use a different location.
 
 ## Quickstart
 
