@@ -24,7 +24,7 @@ class PlaceDB:
         if not os.path.exists(db_path):
             raise FileNotFoundError(
                 f"Database not found at {db_path}. "
-                "Run: python scripts/download_data.py && python scripts/build_db.py\n"
+                "Run: geo-resolve download-data && geo-resolve build-db\n"
                 "Or set GEO_RESOLVER_DATA_DIR to the correct data directory."
             )
         self.con = duckdb.connect(db_path, read_only=True)
