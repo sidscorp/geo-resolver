@@ -15,9 +15,12 @@ class Place:
     country: str | None
     region: str | None
     geometry: Geometry | None
+    population: int | None = None
+    prominence: int | None = None
+    centroid: tuple[float, float] | None = None
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "id": self.id,
             "name": self.name,
             "subtype": self.subtype,
@@ -25,6 +28,13 @@ class Place:
             "region": self.region,
             "has_geometry": self.geometry is not None,
         }
+        if self.population is not None:
+            d["population"] = self.population
+        if self.prominence is not None:
+            d["prominence"] = self.prominence
+        if self.centroid is not None:
+            d["centroid"] = list(self.centroid)
+        return d
 
 
 @dataclass
@@ -37,6 +47,13 @@ class Feature:
     geometry: Geometry | None
     geom_type: str | None = None  # "Polygon", "LineString", "Point", etc.
     is_point: bool = False
+    confidence: float | None = None
+    country: str | None = None
+    region: str | None = None
+    locality: str | None = None
+    wikidata: str | None = None
+    elevation: int | None = None
+    centroid: tuple[float, float] | None = None
 
     def to_dict(self) -> dict:
         d = {
@@ -49,6 +66,20 @@ class Feature:
         }
         if self.geom_type:
             d["geom_type"] = self.geom_type
+        if self.confidence is not None:
+            d["confidence"] = round(self.confidence, 3)
+        if self.country is not None:
+            d["country"] = self.country
+        if self.region is not None:
+            d["region"] = self.region
+        if self.locality is not None:
+            d["locality"] = self.locality
+        if self.wikidata is not None:
+            d["wikidata"] = self.wikidata
+        if self.elevation is not None:
+            d["elevation"] = self.elevation
+        if self.centroid is not None:
+            d["centroid"] = list(self.centroid)
         return d
 
 
