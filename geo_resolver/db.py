@@ -28,6 +28,7 @@ class PlaceDB:
                 "Or set GEO_RESOLVER_DATA_DIR to the correct data directory."
             )
         self.con = duckdb.connect(db_path, read_only=True)
+        self.con.execute("INSTALL spatial; LOAD spatial;")
 
         features_path = os.path.join(data_dir, "features.duckdb")
         self.features_con = None
@@ -99,7 +100,8 @@ class PlaceDB:
         where = " AND ".join(conditions)
 
         query = f"""
-            SELECT id, COALESCE(name_en, name) as display_name, subtype, country, region
+            SELECT id, COALESCE(name_en, name) as display_name, subtype, country, region,
+                   population, prominence
             FROM divisions
             WHERE {where}
             ORDER BY
@@ -110,7 +112,10 @@ class PlaceDB:
                     WHEN 'country' THEN 0 WHEN 'region' THEN 1
                     WHEN 'county' THEN 2 WHEN 'localadmin' THEN 3
                     WHEN 'locality' THEN 4 WHEN 'borough' THEN 5
-                    WHEN 'neighborhood' THEN 6 ELSE 7 END
+                    WHEN 'neighborhood' THEN 6 ELSE 7 END,
+                prominence DESC NULLS LAST,
+                population DESC NULLS LAST,
+                LENGTH(COALESCE(name_en, name)) ASC
             LIMIT $limit
         """
         return self.con.execute(query, params).fetchall()
@@ -145,13 +150,21 @@ class PlaceDB:
 
         results = []
         for row in rows:
+            geom = geom_map.get(row[0])
+            centroid = None
+            if geom is not None:
+                c = geom.centroid
+                centroid = (round(c.y, 4), round(c.x, 4))
             results.append(Place(
                 id=row[0],
                 name=row[1],
                 subtype=row[2],
                 country=row[3],
                 region=row[4],
-                geometry=geom_map.get(row[0]),
+                geometry=geom,
+                population=row[5],
+                prominence=row[6],
+                centroid=centroid,
             ))
         return results
 
@@ -181,15 +194,25 @@ class PlaceDB:
 
         where = " AND ".join(conditions)
 
+        # Add extra columns based on table
+        if table == "land_features":
+            extra_cols = ", wikidata, elevation"
+        elif table in ("water_features", "land_use_features"):
+            extra_cols = ", wikidata"
+        else:
+            extra_cols = ""
+
         query = f"""
             SELECT id, COALESCE(name_en, name) as display_name,
-                   {class_column}, geom_wkb, geom_type
+                   {class_column}, geom_wkb, geom_type{extra_cols}
             FROM {table}
             WHERE {where}
             ORDER BY
                 CASE WHEN name = $exact_name OR name_en = $exact_name THEN 0
                      WHEN name ILIKE $exact_name OR name_en ILIKE $exact_name THEN 1
-                     ELSE 2 END
+                     ELSE 2 END,
+                CASE WHEN wikidata IS NOT NULL THEN 0 ELSE 1 END,
+                LENGTH(COALESCE(name_en, name)) ASC
             LIMIT $limit
         """
         return self.features_con.execute(query, params).fetchall()
@@ -225,6 +248,20 @@ class PlaceDB:
                 except Exception:
                     logger.warning("Failed to parse WKB for %s %s", source, row[0], exc_info=True)
 
+            centroid = None
+            if geom is not None:
+                c = geom.centroid
+                centroid = (round(c.y, 4), round(c.x, 4))
+
+            # Extract extra columns based on table
+            wikidata = None
+            elevation = None
+            if table == "land_features":
+                wikidata = row[5] if len(row) > 5 else None
+                elevation = row[6] if len(row) > 6 else None
+            elif table in ("water_features", "land_use_features"):
+                wikidata = row[5] if len(row) > 5 else None
+
             results.append(Feature(
                 id=row[0],
                 name=row[1],
@@ -232,6 +269,9 @@ class PlaceDB:
                 feature_class=row[2],
                 geometry=geom,
                 geom_type=row[4],
+                wikidata=wikidata,
+                elevation=elevation,
+                centroid=centroid,
             ))
         return results
 
@@ -268,6 +308,7 @@ class PlaceDB:
         category: str | None,
         limit: int,
         use_ilike: bool,
+        context: str | None = None,
     ) -> list[tuple]:
         """Run a POI search query, either exact-match or ILIKE."""
         if use_ilike:
@@ -284,31 +325,40 @@ class PlaceDB:
             conditions.append("category = $category")
             params["category"] = category
 
+        if context:
+            conditions.append(
+                "(country ILIKE $ctx OR region ILIKE $ctx OR locality ILIKE $ctx)"
+            )
+            params["ctx"] = f"%{context}%"
+
         where = " AND ".join(conditions)
 
         query = f"""
             SELECT id, COALESCE(name_en, name) as display_name,
-                   category, geom_wkb
+                   category, geom_wkb, confidence, country, region, locality
             FROM places
             WHERE {where}
             ORDER BY
                 CASE WHEN name = $exact_name OR name_en = $exact_name THEN 0
                      WHEN name ILIKE $exact_name OR name_en ILIKE $exact_name THEN 1
-                     ELSE 2 END
+                     ELSE 2 END,
+                confidence DESC NULLS LAST,
+                LENGTH(COALESCE(name_en, name)) ASC
             LIMIT $limit
         """
         return self.places_con.execute(query, params).fetchall()
 
     def search_pois(
-        self, name: str, category: str | None = None, limit: int = 5
+        self, name: str, category: str | None = None, limit: int = 5,
+        context: str | None = None,
     ) -> list[Feature]:
         """Search POIs. Always returns is_point=True."""
         if self.places_con is None:
             return []
 
-        rows = self._run_pois_query(name, category, limit, use_ilike=False)
+        rows = self._run_pois_query(name, category, limit, use_ilike=False, context=context)
         if not rows:
-            rows = self._run_pois_query(name, category, limit, use_ilike=True)
+            rows = self._run_pois_query(name, category, limit, use_ilike=True, context=context)
         results = []
         for row in rows:
             geom = None
@@ -318,6 +368,11 @@ class PlaceDB:
                 except Exception:
                     logger.warning("Failed to parse WKB for place %s", row[0], exc_info=True)
 
+            centroid = None
+            if geom is not None:
+                c = geom.centroid
+                centroid = (round(c.y, 4), round(c.x, 4))
+
             results.append(Feature(
                 id=row[0],
                 name=row[1],
@@ -326,8 +381,35 @@ class PlaceDB:
                 geometry=geom,
                 geom_type="Point",
                 is_point=True,
+                confidence=row[4],
+                country=row[5],
+                region=row[6],
+                locality=row[7],
+                centroid=centroid,
             ))
         return results
+
+    def reverse_geocode(self, lat: float, lon: float) -> 'Place | None':
+        """Return the smallest division containing the given point."""
+        from shapely.geometry import Point as ShapelyPoint
+        point_wkb = wkb.dumps(ShapelyPoint(lon, lat))
+        row = self.con.execute("""
+            SELECT d.id, COALESCE(d.name_en, d.name), d.subtype, d.country, d.region,
+                   d.population, d.prominence
+            FROM division_areas a
+            JOIN divisions d ON d.id = a.division_id
+            WHERE ST_Contains(ST_GeomFromWKB(a.geom_wkb), ST_GeomFromWKB($pt))
+            ORDER BY CASE d.subtype
+                WHEN 'neighborhood' THEN 0 WHEN 'borough' THEN 1
+                WHEN 'locality' THEN 2 WHEN 'localadmin' THEN 3
+                WHEN 'county' THEN 4 WHEN 'region' THEN 5
+                WHEN 'country' THEN 6 ELSE 7 END
+            LIMIT 1
+        """, {"pt": point_wkb}).fetchone()
+        if row is None:
+            return None
+        return Place(id=row[0], name=row[1], subtype=row[2], country=row[3],
+                     region=row[4], geometry=None, population=row[5], prominence=row[6])
 
     def get_subtypes(self) -> list[str]:
         """Return all distinct division subtypes in the database."""
