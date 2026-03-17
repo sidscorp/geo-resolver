@@ -196,3 +196,64 @@ def test_resolve_async(mock_openai_cls, mock_db_cls, mock_db):
     assert isinstance(result, ResolverResult)
     assert result.query == "TestPlace"
     assert not result.geometry.is_empty
+
+
+# --- New tests for mode routing ---
+
+
+@patch("geo_resolver.direct_resolver.DirectResolver")
+@patch("geo_resolver.resolver.PlaceDB")
+def test_resolve_mode_direct(mock_db_cls, mock_direct_cls, mock_db):
+    """Test that mode='direct' routes to DirectResolver."""
+    mock_db_cls.return_value = mock_db
+
+    fake_result = ResolverResult(
+        query="TestPlace",
+        geometry=mock_db.search_places.return_value[0].geometry,
+        steps=[],
+    )
+
+    # Patch at the source module so `from .direct_resolver import DirectResolver`
+    # inside GeoResolver.__init__ picks up the mock.
+    mock_direct_cls.return_value.resolve.return_value = fake_result
+
+    resolver = GeoResolver(data_dir="/fake", mode="direct")
+    result = resolver.resolve("TestPlace", mode="direct")
+
+    assert isinstance(result, ResolverResult)
+    assert result.query == "TestPlace"
+    mock_direct_cls.return_value.resolve.assert_called_once()
+
+
+@patch("geo_resolver.resolver.PlaceDB")
+def test_resolve_mode_unknown_raises(mock_db_cls):
+    """Test that an unknown mode raises ValueError."""
+    mock_db_cls.return_value = MagicMock()
+
+    resolver = GeoResolver(data_dir="/fake", mode="llm")
+
+    with pytest.raises(ValueError, match="Unknown mode"):
+        resolver.resolve("TestPlace", mode="bogus")
+
+
+@patch("geo_resolver.direct_resolver.DirectResolver")
+@patch("geo_resolver.resolver.PlaceDB")
+def test_resolve_without_model_direct_still_works(mock_db_cls, mock_direct_cls, mock_db):
+    """GeoResolver without model= can still use mode='direct'."""
+    mock_db_cls.return_value = mock_db
+
+    fake_result = ResolverResult(
+        query="TestPlace",
+        geometry=mock_db.search_places.return_value[0].geometry,
+        steps=[],
+    )
+    mock_direct_cls.return_value.resolve.return_value = fake_result
+
+    # No model, no client — LLM resolver should not be created
+    resolver = GeoResolver(data_dir="/fake", mode="direct")
+    assert resolver._llm is None
+
+    result = resolver.resolve("TestPlace", mode="direct")
+
+    assert isinstance(result, ResolverResult)
+    mock_direct_cls.return_value.resolve.assert_called_once()
