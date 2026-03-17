@@ -32,7 +32,7 @@ def resolve(req: ResolveRequest):
         raise HTTPException(status_code=429, detail="Too many concurrent requests, try again shortly")
     try:
         resolver = get_resolver()
-        result = resolver.resolve(req.query)
+        result = resolver.resolve(req.query, mode=req.mode)
     except HTTPException:
         raise
     except Exception:
@@ -75,7 +75,7 @@ async def resolve_stream(req: ResolveRequest):
             loop.call_soon_threadsafe(q.put_nowait, ("error", "Too many concurrent requests, try again shortly"))
             return
         try:
-            result = resolver.resolve(req.query, on_step=on_step)
+            result = resolver.resolve(req.query, on_step=on_step, mode=req.mode)
             simplified = result.geometry.simplify(req.simplify_tolerance, preserve_topology=True)
             geojson = {
                 "type": "Feature",

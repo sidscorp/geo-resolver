@@ -18,7 +18,7 @@ def _cmd_resolve(args):
         kwargs["data_dir"] = args.data_dir
 
     with GeoResolver(**kwargs) as resolver:
-        result = resolver.resolve(args.query, max_iterations=args.max_iterations)
+        result = resolver.resolve(args.query, mode=args.mode, max_iterations=args.max_iterations)
 
     indent = 2 if args.pretty else None
     geojson_str = json.dumps(result.geojson, indent=indent)
@@ -68,6 +68,10 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_parser.add_argument("--api-key", default=None, help="LLM API key")
     resolve_parser.add_argument("--base-url", default=None, help="LLM API base URL")
     resolve_parser.add_argument("--data-dir", default=None, help="Path to data directory")
+    resolve_parser.add_argument(
+        "--mode", choices=["llm", "direct", "auto"], default=None,
+        help="Resolution mode: llm (default), direct (no LLM), auto",
+    )
     resolve_parser.add_argument(
         "--max-iterations", type=int, default=20,
         help="Maximum LLM iterations (default: 20)",
