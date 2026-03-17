@@ -71,6 +71,7 @@ TOOL_DEFINITIONS = [
             "description": (
                 "Search for natural land features like islands, mountains, peaks, "
                 "glaciers, peninsulas, volcanoes, ridges, valleys, capes, cliffs. "
+                "Results include confidence scores and location context for disambiguation. "
                 "Best for: 'Ellis Island', 'Rocky Mountains', 'Mount Rainier', 'Cape Cod'."
             ),
             "parameters": {
@@ -82,6 +83,10 @@ TOOL_DEFINITIONS = [
                         "enum": ["island", "islet", "mountain_range", "peak", "glacier",
                                  "peninsula", "cape", "cliff", "ridge", "valley", "volcano"],
                         "description": "Filter by feature type",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Geographic context for disambiguation (e.g. 'New York', 'France')",
                     },
                 },
                 "required": ["name"],
@@ -95,6 +100,7 @@ TOOL_DEFINITIONS = [
             "description": (
                 "Search for water features like lakes, rivers, bays, reservoirs, "
                 "straits, oceans, seas, springs, waterfalls. "
+                "Results include confidence scores and location context for disambiguation. "
                 "Best for: 'Lake Tahoe', 'Chesapeake Bay', 'Mississippi River'. "
                 "Note: rivers may be LineString geometry, not Polygon."
             ),
@@ -108,6 +114,10 @@ TOOL_DEFINITIONS = [
                                  "ocean", "sea", "spring", "waterfall"],
                         "description": "Filter by water feature type",
                     },
+                    "context": {
+                        "type": "string",
+                        "description": "Geographic context for disambiguation (e.g. 'New York', 'France')",
+                    },
                 },
                 "required": ["name"],
             },
@@ -120,6 +130,7 @@ TOOL_DEFINITIONS = [
             "description": (
                 "Search for land use areas like parks, nature reserves, recreation areas, "
                 "cemeteries, military areas, campgrounds, entertainment areas. "
+                "Results include confidence scores and location context for disambiguation. "
                 "Best for: 'Central Park', 'Yellowstone', 'Arlington National Cemetery'."
             ),
             "parameters": {
@@ -131,6 +142,10 @@ TOOL_DEFINITIONS = [
                         "enum": ["park", "protected", "recreation", "cemetery",
                                  "military", "campground", "entertainment"],
                         "description": "Filter by land use type",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Geographic context for disambiguation (e.g. 'New York', 'France')",
                     },
                 },
                 "required": ["name"],
@@ -146,6 +161,7 @@ TOOL_DEFINITIONS = [
                 "stadiums, bridges, airports, train stations, zoos, aquariums. "
                 "Returns POINT geometries — you MUST apply a buffer to create an area. "
                 "Use the suggested_buffer_km from results, or use buffer tool. "
+                "Results include confidence scores and location context for disambiguation. "
                 "Best for: 'Statue of Liberty', 'Eiffel Tower', 'Golden Gate Bridge'."
             ),
             "parameters": {
@@ -155,6 +171,10 @@ TOOL_DEFINITIONS = [
                     "category": {
                         "type": "string",
                         "description": "Filter by category (e.g. 'landmark_and_historical_building', 'museum', 'airport', 'bridge', 'stadium')",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Geographic context for disambiguation (e.g. 'New York', 'France')",
                     },
                 },
                 "required": ["name"],
@@ -329,17 +349,17 @@ class ToolExecutor:
     def _search_places(self, name: str, place_type: str | None = None, context: str | None = None) -> str:
         return self._format_search_results(self.db.search_places(name, place_type, context))
 
-    def _search_land_features(self, name: str, feature_class: str | None = None) -> str:
+    def _search_land_features(self, name: str, feature_class: str | None = None, context: str | None = None) -> str:
         return self._format_search_results(self.db.search_land_features(name, feature_class))
 
-    def _search_water_features(self, name: str, feature_class: str | None = None) -> str:
+    def _search_water_features(self, name: str, feature_class: str | None = None, context: str | None = None) -> str:
         return self._format_search_results(self.db.search_water_features(name, feature_class))
 
-    def _search_land_use(self, name: str, subtype: str | None = None) -> str:
+    def _search_land_use(self, name: str, subtype: str | None = None, context: str | None = None) -> str:
         return self._format_search_results(self.db.search_land_use(name, subtype))
 
-    def _search_pois(self, name: str, category: str | None = None) -> str:
-        return self._format_search_results(self.db.search_pois(name, category), add_buffer_hint=True)
+    def _search_pois(self, name: str, category: str | None = None, context: str | None = None) -> str:
+        return self._format_search_results(self.db.search_pois(name, category, context=context), add_buffer_hint=True)
 
     def _spatial_result_json(self, result: Geometry) -> str:
         gid = self._store(result)
