@@ -159,3 +159,40 @@ class TestOpenAIAdapter:
 
         call_args = client.chat.completions.create.call_args
         assert call_args.kwargs["messages"] == messages
+
+
+class TestProviderFactory:
+    @patch("openai.OpenAI")
+    def test_explicit_openai(self, mock_cls):
+        from geo_resolver.providers import get_adapter
+        from geo_resolver.providers.openai_adapter import OpenAIAdapter
+        adapter = get_adapter("gpt-4o", provider="openai", api_key="test")
+        assert isinstance(adapter, OpenAIAdapter)
+
+    @patch("openai.OpenAI")
+    def test_autodetect_gpt(self, mock_cls):
+        from geo_resolver.providers import get_adapter
+        from geo_resolver.providers.openai_adapter import OpenAIAdapter
+        adapter = get_adapter("gpt-4o", api_key="test")
+        assert isinstance(adapter, OpenAIAdapter)
+
+    @patch("openai.OpenAI")
+    def test_explicit_provider_overrides_autodetect(self, mock_cls):
+        """claude- model with explicit provider='openai' uses OpenAI adapter."""
+        from geo_resolver.providers import get_adapter
+        from geo_resolver.providers.openai_adapter import OpenAIAdapter
+        adapter = get_adapter("claude-sonnet-4-20250514", provider="openai", api_key="test", base_url="https://openrouter.ai/api/v1")
+        assert isinstance(adapter, OpenAIAdapter)
+
+    def test_unknown_provider_raises(self):
+        from geo_resolver.providers import get_adapter
+        with pytest.raises(ValueError, match="Unknown provider"):
+            get_adapter("some-model", provider="nonexistent")
+
+    def test_client_passthrough(self):
+        from geo_resolver.providers import get_adapter
+        from geo_resolver.providers.openai_adapter import OpenAIAdapter
+        client = MagicMock()
+        adapter = get_adapter("gpt-4o", client=client)
+        assert isinstance(adapter, OpenAIAdapter)
+        assert adapter.client is client
