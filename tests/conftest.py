@@ -80,3 +80,22 @@ def make_chat_response(tool_calls=None, content=None):
     response = MagicMock()
     response.choices = [choice]
     return response
+
+
+from geo_resolver.providers.base import AdapterResponse, ToolCall as AdapterToolCall
+from geo_resolver.models import TokenUsage as _TokenUsage
+
+
+def make_adapter_response(tool_calls=None, content=None, usage=None):
+    """Build an AdapterResponse for testing the adapter-based resolver."""
+    tcs = None
+    if tool_calls:
+        tcs = [
+            AdapterToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"])
+            for tc in tool_calls
+        ]
+    return AdapterResponse(
+        content=content,
+        tool_calls=tcs,
+        usage=usage or _TokenUsage(),
+    )

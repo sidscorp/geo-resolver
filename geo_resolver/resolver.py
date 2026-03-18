@@ -3,7 +3,6 @@ import json
 import logging
 import os
 from collections.abc import Callable
-from openai import OpenAI
 from .db import PlaceDB
 from .tools import ToolExecutor, TOOL_DEFINITIONS
 from .models import ResolverResult, TokenUsage
@@ -58,38 +57,29 @@ def _describe_step(tool: str, args: dict) -> str:
 class LLMResolver:
     """Resolve queries via LLM tool-calling loop."""
 
-    def __init__(self, db, model=None, *, client=None, api_key=None, base_url=None):
+    def __init__(self, db, model=None, *, adapter=None, client=None, api_key=None, base_url=None):
         self.db = db
-        self.model = model or os.environ.get("GEO_RESOLVER_MODEL")
-        if self.model is None:
-            raise ValueError(
-                "model is required — pass it to LLMResolver() or set GEO_RESOLVER_MODEL env var"
-            )
-        if client is not None:
-            self.client = client
+
+        if adapter is not None:
+            self.adapter = adapter
+            self.model = adapter.model
         else:
-            self.client = OpenAI(
+            # Backwards-compatible: build OpenAI adapter from client or credentials
+            resolved_model = model or os.environ.get("GEO_RESOLVER_MODEL")
+            if resolved_model is None:
+                raise ValueError(
+                    "model is required — pass it to LLMResolver() or set GEO_RESOLVER_MODEL env var"
+                )
+            from .providers.openai_adapter import OpenAIAdapter
+            self.adapter = OpenAIAdapter(
+                model=resolved_model,
+                client=client,
                 api_key=api_key or os.environ.get("GEO_RESOLVER_API_KEY"),
                 base_url=base_url or os.environ.get("GEO_RESOLVER_BASE_URL"),
             )
+            self.model = resolved_model
 
     def resolve(self, query: str, on_step=None, verbose: bool = False, max_iterations: int = 20) -> ResolverResult:
-        """Resolve a natural language query into a ``ResolverResult``.
-
-        Args:
-            query: Geographic description (e.g. ``"Northern California"``).
-            on_step: Optional callback invoked with a step dict after each
-                tool call or LLM thinking message.
-            verbose: If ``True``, print step summaries to stdout.
-
-        Returns:
-            A :class:`~geo_resolver.models.ResolverResult` containing the
-            resolved geometry, the original query, and the step log.
-
-        Raises:
-            ValueError: If *query* is empty or exceeds 2000 characters.
-            RuntimeError: If no matching geometry could be found.
-        """
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must be a non-empty string")
         if len(query) > 2000:
@@ -112,31 +102,35 @@ class LLMResolver:
                 print(f"  {step.get('message', step.get('tool', '...'))}")
 
         for i in range(max_iterations):
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                tools=TOOL_DEFINITIONS,
-            )
-            if response.usage:
-                usage.prompt_tokens += response.usage.prompt_tokens
-                usage.completion_tokens += response.usage.completion_tokens
-                usage.total_tokens += response.usage.total_tokens
+            response = self.adapter.chat_completion(messages=messages, tools=TOOL_DEFINITIONS)
+            usage.prompt_tokens += response.usage.prompt_tokens
+            usage.completion_tokens += response.usage.completion_tokens
+            usage.total_tokens += response.usage.total_tokens
 
-            choice = response.choices[0]
-
-            if choice.message.tool_calls:
-                if choice.message.content:
-                    _emit({"type": "thinking", "message": choice.message.content.strip()})
+            if response.tool_calls:
+                if response.content:
+                    _emit({"type": "thinking", "message": response.content.strip()})
 
                 text_responses = 0
-                messages.append(choice.message)
-                for tc in choice.message.tool_calls:
-                    args = json.loads(tc.function.arguments)
-                    message = _describe_step(tc.function.name, args)
-                    result = executor.execute(tc.function.name, args)
+
+                # Build assistant message with tool_calls in OpenAI dict format
+                assistant_msg = {"role": "assistant", "content": response.content}
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+                    }
+                    for tc in response.tool_calls
+                ]
+                messages.append(assistant_msg)
+
+                for tc in response.tool_calls:
+                    message = _describe_step(tc.name, tc.arguments)
+                    result = executor.execute(tc.name, tc.arguments)
                     step = {
-                        "tool": tc.function.name,
-                        "args": args,
+                        "tool": tc.name,
+                        "args": tc.arguments,
                         "message": message,
                         "result_summary": result[:200],
                     }
@@ -152,14 +146,14 @@ class LLMResolver:
                     break
             else:
                 text_responses += 1
-                if choice.message.content:
-                    _emit({"type": "thinking", "message": choice.message.content.strip()})
+                if response.content:
+                    _emit({"type": "thinking", "message": response.content.strip()})
 
                 if executor.final_id:
                     break
                 if text_responses >= 2:
                     break
-                messages.append(choice.message)
+                messages.append({"role": "assistant", "content": response.content})
                 messages.append({
                     "role": "user",
                     "content": (
@@ -190,7 +184,6 @@ class LLMResolver:
     async def resolve_async(
         self, query: str, on_step=None, verbose: bool = False, max_iterations: int = 20,
     ) -> ResolverResult:
-        """Async wrapper around :meth:`resolve` using ``asyncio.to_thread``."""
         import asyncio
         return await asyncio.to_thread(
             self.resolve, query, on_step=on_step, verbose=verbose, max_iterations=max_iterations,
@@ -198,11 +191,7 @@ class LLMResolver:
 
 
 class GeoResolver:
-    """Unified entry point for geographic query resolution.
-
-    Supports mode="llm" (LLM tool-calling), mode="direct" (no LLM),
-    or mode="auto" (try direct, fall back to LLM).
-    """
+    """Unified entry point for geographic query resolution."""
 
     def __init__(
         self,
@@ -210,9 +199,12 @@ class GeoResolver:
         model: str | None = None,
         *,
         mode: str = "llm",
+        provider: str | None = None,
+        adapter=None,
         client=None,
         api_key: str | None = None,
         base_url: str | None = None,
+        **provider_kwargs,
     ):
         if data_dir is None:
             data_dir = os.environ.get(
@@ -225,13 +217,26 @@ class GeoResolver:
         # LLM resolver (optional)
         self._llm = None
         resolved_model = model or os.environ.get("GEO_RESOLVER_MODEL")
-        if resolved_model or client:
+
+        if adapter is not None:
+            self._llm = LLMResolver(self.db, adapter=adapter)
+        elif provider is not None:
+            from .providers import get_adapter
+            built_adapter = get_adapter(
+                resolved_model or "",
+                provider=provider,
+                api_key=api_key,
+                base_url=base_url,
+                **provider_kwargs,
+            )
+            self._llm = LLMResolver(self.db, adapter=built_adapter)
+        elif resolved_model or client:
             self._llm = LLMResolver(
                 self.db, model=resolved_model, client=client,
                 api_key=api_key, base_url=base_url,
             )
 
-        # Direct resolver (always available once implemented)
+        # Direct resolver (always available)
         try:
             from .direct_resolver import DirectResolver
             self._direct = DirectResolver(self.db)
