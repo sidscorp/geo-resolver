@@ -55,50 +55,16 @@ def _describe_step(tool: str, args: dict) -> str:
     return f"Running {tool}..."
 
 
-class GeoResolver:
-    """Resolve natural language geographic queries into Shapely geometries.
+class LLMResolver:
+    """Resolve queries via LLM tool-calling loop."""
 
-    Uses an LLM tool-calling loop to search Overture Maps data and compose
-    spatial operations until a final boundary polygon is produced.
-    """
-
-    def __init__(
-        self,
-        data_dir: str | None = None,
-        model: str | None = None,
-        *,
-        client: OpenAI | None = None,
-        api_key: str | None = None,
-        base_url: str | None = None,
-    ):
-        """Initialise the resolver.
-
-        Args:
-            data_dir: Path to the DuckDB data directory. Defaults to
-                ``GEO_RESOLVER_DATA_DIR`` env var or ``~/.geo-resolver/data``.
-            model: LLM model identifier (e.g. ``"openai/gpt-4o"``). Falls back
-                to ``GEO_RESOLVER_MODEL`` env var.
-            client: Pre-built ``OpenAI`` client instance. If provided,
-                *api_key* and *base_url* are ignored.
-            api_key: API key passed to the default client constructor.
-            base_url: Base URL passed to the default client constructor.
-        """
-        if data_dir is None:
-            data_dir = os.environ.get(
-                "GEO_RESOLVER_DATA_DIR",
-                os.path.expanduser("~/.geo-resolver/data"),
-            )
-        self.db = PlaceDB(data_dir)
-
-        self.model = (
-            model
-            or os.environ.get("GEO_RESOLVER_MODEL")
-        )
+    def __init__(self, db, model=None, *, client=None, api_key=None, base_url=None):
+        self.db = db
+        self.model = model or os.environ.get("GEO_RESOLVER_MODEL")
         if self.model is None:
             raise ValueError(
-                "model is required — pass it to GeoResolver() or set GEO_RESOLVER_MODEL env var"
+                "model is required — pass it to LLMResolver() or set GEO_RESOLVER_MODEL env var"
             )
-
         if client is not None:
             self.client = client
         else:
@@ -106,13 +72,6 @@ class GeoResolver:
                 api_key=api_key or os.environ.get("GEO_RESOLVER_API_KEY"),
                 base_url=base_url or os.environ.get("GEO_RESOLVER_BASE_URL"),
             )
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-        return False
 
     def resolve(self, query: str, on_step=None, verbose: bool = False, max_iterations: int = 20) -> ResolverResult:
         """Resolve a natural language query into a ``ResolverResult``.
@@ -237,6 +196,102 @@ class GeoResolver:
             self.resolve, query, on_step=on_step, verbose=verbose, max_iterations=max_iterations,
         )
 
+
+class GeoResolver:
+    """Unified entry point for geographic query resolution.
+
+    Supports mode="llm" (LLM tool-calling), mode="direct" (no LLM),
+    or mode="auto" (try direct, fall back to LLM).
+    """
+
+    def __init__(
+        self,
+        data_dir: str | None = None,
+        model: str | None = None,
+        *,
+        mode: str = "llm",
+        client=None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ):
+        if data_dir is None:
+            data_dir = os.environ.get(
+                "GEO_RESOLVER_DATA_DIR",
+                os.path.expanduser("~/.geo-resolver/data"),
+            )
+        self.db = PlaceDB(data_dir)
+        self.default_mode = mode
+
+        # LLM resolver (optional)
+        self._llm = None
+        resolved_model = model or os.environ.get("GEO_RESOLVER_MODEL")
+        if resolved_model or client:
+            self._llm = LLMResolver(
+                self.db, model=resolved_model, client=client,
+                api_key=api_key, base_url=base_url,
+            )
+
+        # Direct resolver (always available once implemented)
+        try:
+            from .direct_resolver import DirectResolver
+            self._direct = DirectResolver(self.db)
+        except ImportError:
+            self._direct = None
+
+    @property
+    def model(self):
+        return self._llm.model if self._llm else None
+
+    def resolve(self, query, mode=None, on_step=None, verbose=False, max_iterations=20):
+        mode = mode or self.default_mode
+        if mode == "direct":
+            if self._direct is None:
+                raise ValueError("Direct resolver not available — direct_resolver module not found")
+            return self._direct.resolve(query, on_step=on_step, verbose=verbose)
+        elif mode == "llm":
+            if self._llm is None:
+                raise ValueError("LLM resolver not configured — provide model/api_key")
+            return self._llm.resolve(query, on_step=on_step, verbose=verbose, max_iterations=max_iterations)
+        elif mode == "auto":
+            return self._resolve_auto(query, on_step=on_step, verbose=verbose, max_iterations=max_iterations)
+        else:
+            raise ValueError(f"Unknown mode: {mode!r}. Use 'llm', 'direct', or 'auto'.")
+
+    def _resolve_auto(self, query, on_step=None, verbose=False, max_iterations=20):
+        spatial_keywords = [
+            "excluding", "except", "minus", "without",
+            "and", "plus", "combined",
+            "overlap", "intersection",
+            "north of", "south of", "east of", "west of",
+        ]
+        query_lower = query.lower()
+        needs_llm = any(kw in query_lower for kw in spatial_keywords)
+
+        if not needs_llm and self._direct is not None:
+            try:
+                result = self._direct.resolve(query, on_step=on_step, verbose=verbose)
+                if result is not None:
+                    return result
+            except Exception:
+                logger.debug("Direct resolve failed for '%s', falling back to LLM", query)
+
+        if self._llm is None:
+            raise ValueError("Query requires LLM but no model configured")
+        return self._llm.resolve(query, on_step=on_step, verbose=verbose, max_iterations=max_iterations)
+
+    async def resolve_async(self, query, mode=None, on_step=None, verbose=False, max_iterations=20):
+        import asyncio
+        return await asyncio.to_thread(
+            self.resolve, query, mode=mode, on_step=on_step,
+            verbose=verbose, max_iterations=max_iterations,
+        )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
     def close(self):
-        """Close underlying database connections."""
         self.db.close()

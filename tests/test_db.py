@@ -18,16 +18,17 @@ def tmp_db(tmp_path):
     con.execute("""
         CREATE TABLE divisions (
             id VARCHAR, name VARCHAR, name_en VARCHAR,
-            subtype VARCHAR, country VARCHAR, region VARCHAR
+            subtype VARCHAR, country VARCHAR, region VARCHAR,
+            population INTEGER, prominence INTEGER
         )
     """)
     con.execute("""
         INSERT INTO divisions VALUES
-            ('d1', 'California',    NULL,            'region',   'US', 'US-CA'),
-            ('d2', 'Georgia',       NULL,            'region',   'US', 'US-GA'),
-            ('d3', 'Georgia',       'Georgia',       'country',  'GE', NULL),
-            ('d4', 'Oakland',       NULL,            'locality', 'US', 'US-CA'),
-            ('d5', 'San Francisco', 'San Francisco', 'locality', 'US', 'US-CA')
+            ('d1', 'California',    NULL,            'region',   'US', 'US-CA', 39000000, 20),
+            ('d2', 'Georgia',       NULL,            'region',   'US', 'US-GA', 10700000, 18),
+            ('d3', 'Georgia',       'Georgia',       'country',  'GE', NULL,    3700000,  15),
+            ('d4', 'Oakland',       NULL,            'locality', 'US', 'US-CA', 430000,   14),
+            ('d5', 'San Francisco', 'San Francisco', 'locality', 'US', 'US-CA', 870000,   16)
     """)
 
     # division_areas — WKB blobs for d1 and d5
@@ -48,37 +49,40 @@ def tmp_db(tmp_path):
     con.execute("""
         CREATE TABLE land_features (
             id VARCHAR, name VARCHAR, name_en VARCHAR,
-            class VARCHAR, geom_wkb BLOB, geom_type VARCHAR
+            class VARCHAR, geom_wkb BLOB, geom_type VARCHAR,
+            wikidata VARCHAR, elevation INTEGER
         )
     """)
     mt_wkb = wkb.dumps(Point(-121.9, 36.6))
     con.execute(
-        "INSERT INTO land_features VALUES ($1, $2, $3, $4, $5, $6)",
-        ["lf1", "Mount Diablo", "Mount Diablo", "peak", mt_wkb, "Point"],
+        "INSERT INTO land_features VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        ["lf1", "Mount Diablo", "Mount Diablo", "peak", mt_wkb, "Point", "Q1234", 1173],
     )
 
     con.execute("""
         CREATE TABLE water_features (
             id VARCHAR, name VARCHAR, name_en VARCHAR,
-            class VARCHAR, geom_wkb BLOB, geom_type VARCHAR
+            class VARCHAR, geom_wkb BLOB, geom_type VARCHAR,
+            wikidata VARCHAR
         )
     """)
     lake_wkb = wkb.dumps(box(-122.5, 37.9, -122.4, 38.0))
     con.execute(
-        "INSERT INTO water_features VALUES ($1, $2, $3, $4, $5, $6)",
-        ["wf1", "Lake Merritt", "Lake Merritt", "lake", lake_wkb, "Polygon"],
+        "INSERT INTO water_features VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        ["wf1", "Lake Merritt", "Lake Merritt", "lake", lake_wkb, "Polygon", None],
     )
 
     con.execute("""
         CREATE TABLE land_use_features (
             id VARCHAR, name VARCHAR, name_en VARCHAR,
-            subtype VARCHAR, class VARCHAR, geom_wkb BLOB, geom_type VARCHAR
+            subtype VARCHAR, class VARCHAR, geom_wkb BLOB, geom_type VARCHAR,
+            wikidata VARCHAR
         )
     """)
     park_wkb = wkb.dumps(box(-122.5, 37.75, -122.45, 37.78))
     con.execute(
-        "INSERT INTO land_use_features VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        ["lu1", "Golden Gate Park", "Golden Gate Park", "park", "park", park_wkb, "Polygon"],
+        "INSERT INTO land_use_features VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        ["lu1", "Golden Gate Park", "Golden Gate Park", "park", "park", park_wkb, "Polygon", "Q5678"],
     )
     con.close()
 
@@ -89,13 +93,15 @@ def tmp_db(tmp_path):
     con.execute("""
         CREATE TABLE places (
             id VARCHAR, name VARCHAR, name_en VARCHAR,
-            category VARCHAR, geom_wkb BLOB
+            category VARCHAR, confidence DOUBLE,
+            country VARCHAR, region VARCHAR, locality VARCHAR,
+            geom_wkb BLOB
         )
     """)
     poi_wkb = wkb.dumps(Point(-122.4, 37.8))
     con.execute(
-        "INSERT INTO places VALUES ($1, $2, $3, $4, $5)",
-        ["p1", "Exploratorium", "Exploratorium", "museum", poi_wkb],
+        "INSERT INTO places VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        ["p1", "Exploratorium", "Exploratorium", "museum", 0.95, "US", "CA", "San Francisco", poi_wkb],
     )
     con.close()
 
@@ -222,11 +228,12 @@ def test_missing_optional_dbs(tmp_path):
     con.execute("""
         CREATE TABLE divisions (
             id VARCHAR, name VARCHAR, name_en VARCHAR,
-            subtype VARCHAR, country VARCHAR, region VARCHAR
+            subtype VARCHAR, country VARCHAR, region VARCHAR,
+            population INTEGER, prominence INTEGER
         )
     """)
     con.execute("CREATE TABLE division_areas (division_id VARCHAR, geom_wkb BLOB)")
-    con.execute("INSERT INTO divisions VALUES ('d1', 'Test', NULL, 'locality', 'US', 'US-CA')")
+    con.execute("INSERT INTO divisions VALUES ('d1', 'Test', NULL, 'locality', 'US', 'US-CA', NULL, NULL)")
     con.close()
 
     db = PlaceDB(str(tmp_path))
@@ -236,6 +243,42 @@ def test_missing_optional_dbs(tmp_path):
     assert db.search_pois("anything") == []
     results = db.search_places("Test")
     assert len(results) == 1
+    db.close()
+
+
+def test_search_places_returns_enriched_fields(tmp_db):
+    db = PlaceDB(str(tmp_db))
+    results = db.search_places("California")
+    assert results[0].population == 39000000
+    assert results[0].prominence == 20
+    assert results[0].centroid is not None
+    db.close()
+
+
+def test_search_pois_returns_enriched_fields(tmp_db):
+    db = PlaceDB(str(tmp_db))
+    results = db.search_pois("Exploratorium")
+    assert results[0].confidence == 0.95
+    assert results[0].country == "US"
+    assert results[0].region == "CA"
+    assert results[0].locality == "San Francisco"
+    assert results[0].centroid is not None
+    db.close()
+
+
+def test_search_land_features_returns_enriched_fields(tmp_db):
+    db = PlaceDB(str(tmp_db))
+    results = db.search_land_features("Mount Diablo")
+    assert results[0].wikidata == "Q1234"
+    assert results[0].elevation == 1173
+    assert results[0].centroid is not None
+    db.close()
+
+
+def test_search_land_use_returns_wikidata(tmp_db):
+    db = PlaceDB(str(tmp_db))
+    results = db.search_land_use("Golden Gate Park")
+    assert results[0].wikidata == "Q5678"
     db.close()
 
 

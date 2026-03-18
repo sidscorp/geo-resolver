@@ -32,6 +32,13 @@ RULES:
 - You MUST always call finalize when you have found a suitable geometry. Even if the match isn't perfect, finalize with the best available result.
 - If you truly cannot find any matching geometry after trying multiple search strategies, call finalize with whatever closest match you found.
 
+DISAMBIGUATION:
+- Search results are ranked by confidence/prominence — the first result is usually the best match.
+- Results include location context (country, region, locality, centroid coordinates). Use these to verify you're selecting the correct entity.
+- When multiple results share the same name, prefer: higher confidence → has wikidata → larger population/prominence → matches expected geographic context.
+- Use the context parameter on search tools to disambiguate (e.g. search_pois("Statue of Liberty", context="New York")).
+- If the top result's location doesn't match what you expect, check other results or retry with context.
+
 EXAMPLES:
 - "San Francisco Bay Area" → search 9 Bay Area counties individually, union them
 - "Northern California" → search California (region), then directional_subset with "north"
@@ -41,5 +48,5 @@ EXAMPLES:
 - "Lake Tahoe" → search_water_features("Tahoe", feature_class="lake")
 - "Ellis Island" → search_land_features("Ellis Island", feature_class="island")
 - "Central Park" → search_land_use("Central Park", subtype="park")
-- "Statue of Liberty" → search_pois("Statue of Liberty"), then buffer with suggested_buffer_km
+- "Statue of Liberty" → search_pois("Statue of Liberty", context="New York"), then buffer with suggested_buffer_km
 - "Within 50km of the Eiffel Tower" → search_pois("Eiffel Tower"), buffer 50km

@@ -35,7 +35,9 @@ def build_divisions():
             names.common.en as name_en,
             subtype,
             country,
-            region
+            region,
+            population,
+            cartography.prominence as prominence
         FROM read_parquet('{division_path}')
     """)
     count = con.execute("SELECT count(*) FROM divisions").fetchone()[0]
@@ -46,6 +48,7 @@ def build_divisions():
     con.execute("CREATE INDEX idx_div_name_en ON divisions(name_en)")
     con.execute("CREATE INDEX idx_div_subtype ON divisions(subtype)")
     con.execute("CREATE INDEX idx_div_country ON divisions(country)")
+    con.execute("CREATE INDEX idx_div_prominence ON divisions(prominence)")
 
     logger.info("Importing division areas (land only)...")
     con.execute(f"""
@@ -89,6 +92,8 @@ def build_features():
                 names.primary as name,
                 names.common.en as name_en,
                 class,
+                wikidata,
+                elevation,
                 ST_AsWKB(geometry) as geom_wkb,
                 ST_GeometryType(geometry) as geom_type
             FROM read_parquet('{land_path}')
@@ -112,6 +117,7 @@ def build_features():
                 names.primary as name,
                 names.common.en as name_en,
                 class,
+                wikidata,
                 ST_AsWKB(geometry) as geom_wkb,
                 ST_GeometryType(geometry) as geom_type
             FROM read_parquet('{water_path}')
@@ -136,6 +142,7 @@ def build_features():
                 names.common.en as name_en,
                 subtype,
                 class,
+                wikidata,
                 ST_AsWKB(geometry) as geom_wkb,
                 ST_GeometryType(geometry) as geom_type
             FROM read_parquet('{land_use_path}')
@@ -183,6 +190,10 @@ def build_places():
             names.primary as name,
             names.common.en as name_en,
             categories.primary as category,
+            confidence,
+            addresses[1].country as country,
+            addresses[1].region as region,
+            addresses[1].locality as locality,
             ST_AsWKB(geometry) as geom_wkb
         FROM read_parquet('{place_path}')
     """)
@@ -193,6 +204,8 @@ def build_places():
     con.execute("CREATE INDEX idx_place_name ON places(name)")
     con.execute("CREATE INDEX idx_place_name_en ON places(name_en)")
     con.execute("CREATE INDEX idx_place_category ON places(category)")
+    con.execute("CREATE INDEX idx_place_confidence ON places(confidence)")
+    con.execute("CREATE INDEX idx_place_country ON places(country)")
 
     db_size = os.path.getsize(db_path) / (1024 * 1024)
     logger.info("Database: %s (%.0f MB)", db_path, db_size)

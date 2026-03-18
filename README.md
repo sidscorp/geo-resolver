@@ -7,8 +7,9 @@ Natural language to GeoJSON boundary resolver. Describe a geographic region in p
 - **Natural language queries** — "Northern California", "Manhattan excluding Central Park", "within 50km of the Eiffel Tower"
 - **Multi-source data** — searches administrative divisions, land features, water bodies, land-use areas, and points of interest from Overture Maps
 - **Spatial operations** — union, intersection, difference, buffer, and directional clipping composed automatically by an LLM agent
+- **Two resolution modes** — LLM-powered (complex queries, spatial compositions) or direct (no LLM, fast entity lookup with smart ranking)
 - **Streaming API** — real-time step-by-step progress via Server-Sent Events
-- **Multi-provider LLM** — works with any OpenAI-compatible API (OpenAI, OpenRouter, Ollama, etc.) via LiteLLM
+- **Multi-provider LLM** — works with any OpenAI-compatible API (OpenAI, OpenRouter, Ollama, etc.)
 
 ## Installation
 
@@ -40,17 +41,38 @@ By default, data is stored in `~/.geo-resolver/data/`. Set `GEO_RESOLVER_DATA_DI
 ```python
 from geo_resolver import GeoResolver
 
+# LLM mode — complex queries with spatial reasoning
 with GeoResolver(model="openai/gpt-4o") as resolver:
     result = resolver.resolve("San Francisco Bay Area")
     result.save("bay_area.geojson")
     print(f"Area: {result.area_km2:.0f} km²")
+
+# Direct mode — fast entity lookup, no LLM needed
+with GeoResolver() as resolver:
+    result = resolver.resolve("Lake Tahoe", mode="direct")
+    result.save("tahoe.geojson")
 ```
 
 ### CLI
 
 ```bash
-geo-resolve "Northern California" --output norcal.geojson --pretty
+# LLM mode (default)
+geo-resolve resolve "Northern California" --output norcal.geojson --pretty
+
+# Direct mode (no LLM, instant)
+geo-resolve resolve "San Francisco" --mode direct --output sf.geojson
+
+# Auto mode (tries direct first, falls back to LLM)
+geo-resolve resolve "Manhattan excluding Central Park" --mode auto
 ```
+
+### Resolution Modes
+
+| Mode | LLM Required | Best For |
+|------|-------------|----------|
+| `llm` | Yes | Complex queries, spatial compositions, landmark disambiguation |
+| `direct` | No | Simple entity lookups, batch processing, offline use |
+| `auto` | Optional | Tries direct first, falls back to LLM for complex queries |
 
 ## Configuration
 
@@ -79,7 +101,7 @@ uvicorn geo_resolver.api.main:app --host 127.0.0.1 --port 8012
 Endpoints:
 
 - `GET /api/health` — health check
-- `POST /api/resolve` — synchronous resolve (JSON body: `{"query": "..."}`)
+- `POST /api/resolve` — synchronous resolve (JSON body: `{"query": "...", "mode": "llm|direct|auto"}`)
 - `POST /api/resolve/stream` — streaming resolve via SSE
 
 ## Development
