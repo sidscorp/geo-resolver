@@ -7,10 +7,16 @@ against Overture Maps data using an LLM-driven agentic approach.
 from importlib.metadata import version, PackageNotFoundError
 from .resolver import GeoResolver, LLMResolver
 from .models import ResolverResult, TokenUsage
+from .providers.base import ProviderAdapter, AdapterResponse, ToolCall
 
 try:
     __version__ = version("geo-resolver")
 except PackageNotFoundError:
     __version__ = "0.0.0-dev"
 
-__all__ = ["GeoResolver", "LLMResolver", "ResolverResult", "TokenUsage", "__version__"]
+__all__ = [
+    "GeoResolver", "LLMResolver",
+    "ResolverResult", "TokenUsage",
+    "ProviderAdapter", "AdapterResponse", "ToolCall",
+    "__version__",
+]

@@ -346,19 +346,29 @@ class ToolExecutor:
             results.append(entry)
         return json.dumps(results, indent=2)
 
-    def _search_places(self, name: str, place_type: str | None = None, context: str | None = None) -> str:
+    def _search_places(self, name: str = "", place_type: str | None = None, context: str | None = None) -> str:
+        if not name:
+            return json.dumps({"error": "name is required for search_places"})
         return self._format_search_results(self.db.search_places(name, place_type, context))
 
-    def _search_land_features(self, name: str, feature_class: str | None = None, context: str | None = None) -> str:
+    def _search_land_features(self, name: str = "", feature_class: str | None = None, context: str | None = None) -> str:
+        if not name:
+            return json.dumps({"error": "name is required for search_land_features"})
         return self._format_search_results(self.db.search_land_features(name, feature_class))
 
-    def _search_water_features(self, name: str, feature_class: str | None = None, context: str | None = None) -> str:
+    def _search_water_features(self, name: str = "", feature_class: str | None = None, context: str | None = None) -> str:
+        if not name:
+            return json.dumps({"error": "name is required for search_water_features"})
         return self._format_search_results(self.db.search_water_features(name, feature_class))
 
-    def _search_land_use(self, name: str, subtype: str | None = None, context: str | None = None) -> str:
+    def _search_land_use(self, name: str = "", subtype: str | None = None, context: str | None = None) -> str:
+        if not name:
+            return json.dumps({"error": "name is required for search_land_use"})
         return self._format_search_results(self.db.search_land_use(name, subtype))
 
-    def _search_pois(self, name: str, category: str | None = None, context: str | None = None) -> str:
+    def _search_pois(self, name: str = "", category: str | None = None, context: str | None = None) -> str:
+        if not name:
+            return json.dumps({"error": "name is required for search_pois"})
         return self._format_search_results(self.db.search_pois(name, category, context=context), add_buffer_hint=True)
 
     def _spatial_result_json(self, result: Geometry) -> str:
