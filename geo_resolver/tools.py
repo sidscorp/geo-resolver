@@ -265,6 +265,7 @@ class ToolExecutor:
     def __init__(self, db: PlaceDB):
         self.db = db
         self.geometries: dict[str, Geometry] = {}
+        self.geometry_names: dict[str, str] = {}
         self.final_id: str | None = None
         self._counter = 0
 
@@ -321,6 +322,7 @@ class ToolExecutor:
             if item.geometry is not None:
                 gid = self._store(item.geometry)
                 entry["geometry_id"] = gid
+                self.geometry_names[gid] = item.name
                 centroid = item.geometry.centroid
                 entry["lat"] = round(centroid.y, 2)
                 entry["lon"] = round(centroid.x, 2)

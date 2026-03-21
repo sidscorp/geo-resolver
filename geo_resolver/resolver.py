@@ -297,7 +297,8 @@ class GeoResolver:
                 )
 
         geometry = executor.geometries[executor.final_id]
-        result = ResolverResult(query=query, geometry=geometry, steps=steps, usage=usage)
+        resolved_name = executor.geometry_names.get(executor.final_id)
+        result = ResolverResult(query=query, geometry=geometry, steps=steps, usage=usage, resolved_name=resolved_name)
         if self._cache is not None:
             self._cache.put(query, result)
         return result

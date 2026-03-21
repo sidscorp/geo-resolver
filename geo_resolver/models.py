@@ -67,6 +67,7 @@ class ResolverResult:
     geometry: Geometry
     steps: list[dict] = field(default_factory=list)
     usage: TokenUsage = field(default_factory=TokenUsage)
+    resolved_name: str | None = None
 
     @property
     def geojson(self) -> dict:
