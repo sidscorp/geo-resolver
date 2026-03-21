@@ -1,7 +1,10 @@
+import hashlib
 import importlib.resources
 import json
 import logging
 import os
+import pickle
+from collections import OrderedDict
 from collections.abc import Callable
 from openai import OpenAI
 from .db import PlaceDB
@@ -9,6 +12,59 @@ from .tools import ToolExecutor, TOOL_DEFINITIONS
 from .models import ResolverResult, TokenUsage
 
 logger = logging.getLogger(__name__)
+
+
+class _QueryCache:
+    """Simple LRU cache for resolved queries, with optional disk persistence."""
+
+    def __init__(self, maxsize: int = 256, cache_dir: str | None = None):
+        self._cache: OrderedDict[str, ResolverResult] = OrderedDict()
+        self._maxsize = maxsize
+        self._cache_dir = cache_dir
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+            self._load_from_disk()
+
+    @staticmethod
+    def _normalize(query: str) -> str:
+        return " ".join(query.lower().strip().split())
+
+    def get(self, query: str) -> ResolverResult | None:
+        key = self._normalize(query)
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]
+        return None
+
+    def put(self, query: str, result: ResolverResult):
+        key = self._normalize(query)
+        self._cache[key] = result
+        self._cache.move_to_end(key)
+        if len(self._cache) > self._maxsize:
+            self._cache.popitem(last=False)
+        if self._cache_dir:
+            self._save_entry(key, result)
+
+    def _disk_path(self, key: str) -> str:
+        h = hashlib.sha256(key.encode()).hexdigest()[:16]
+        return os.path.join(self._cache_dir, f"{h}.pkl")
+
+    def _save_entry(self, key: str, result: ResolverResult):
+        try:
+            with open(self._disk_path(key), "wb") as f:
+                pickle.dump((key, result), f)
+        except Exception:
+            pass
+
+    def _load_from_disk(self):
+        import glob
+        for path in glob.glob(os.path.join(self._cache_dir, "*.pkl")):
+            try:
+                with open(path, "rb") as f:
+                    key, result = pickle.load(f)
+                self._cache[key] = result
+            except Exception:
+                pass
 
 SYSTEM_PROMPT = (
     importlib.resources.files("geo_resolver") / "prompts" / "system.txt"
@@ -70,6 +126,7 @@ class GeoResolver:
         client: OpenAI | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
+        cache: bool = True,
     ):
         """Initialise the resolver.
 
@@ -107,6 +164,12 @@ class GeoResolver:
                 base_url=base_url or os.environ.get("GEO_RESOLVER_BASE_URL"),
             )
 
+        if cache:
+            cache_dir = os.path.join(data_dir, ".cache")
+            self._cache = _QueryCache(cache_dir=cache_dir)
+        else:
+            self._cache = None
+
     def __enter__(self):
         return self
 
@@ -135,6 +198,14 @@ class GeoResolver:
             raise ValueError("query must be a non-empty string")
         if len(query) > 2000:
             raise ValueError("query must be at most 2000 characters")
+
+        if self._cache is not None:
+            cached = self._cache.get(query)
+            if cached is not None:
+                logger.info("Cache hit for '%s'", query)
+                if on_step:
+                    on_step({"type": "cache_hit", "message": f"Cache hit for '{query}'"})
+                return cached
 
         executor = ToolExecutor(self.db)
         messages = [
@@ -226,7 +297,10 @@ class GeoResolver:
                 )
 
         geometry = executor.geometries[executor.final_id]
-        return ResolverResult(query=query, geometry=geometry, steps=steps, usage=usage)
+        result = ResolverResult(query=query, geometry=geometry, steps=steps, usage=usage)
+        if self._cache is not None:
+            self._cache.put(query, result)
+        return result
 
     async def resolve_async(
         self, query: str, on_step=None, verbose: bool = False, max_iterations: int = 20,
