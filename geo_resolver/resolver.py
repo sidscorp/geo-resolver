@@ -20,10 +20,14 @@ class _QueryCache:
     def __init__(self, maxsize: int = 256, cache_dir: str | None = None):
         self._cache: OrderedDict[str, ResolverResult] = OrderedDict()
         self._maxsize = maxsize
-        self._cache_dir = cache_dir
+        self._cache_dir = None
         if cache_dir:
-            os.makedirs(cache_dir, exist_ok=True)
-            self._load_from_disk()
+            try:
+                os.makedirs(cache_dir, exist_ok=True)
+                self._cache_dir = cache_dir
+                self._load_from_disk()
+            except OSError:
+                pass  # disk cache unavailable, memory-only
 
     @staticmethod
     def _normalize(query: str) -> str:
@@ -177,7 +181,7 @@ class GeoResolver:
         self.close()
         return False
 
-    def resolve(self, query: str, on_step=None, verbose: bool = False, max_iterations: int = 20) -> ResolverResult:
+    def resolve(self, query: str, on_step: Callable[[dict], None] | None = None, verbose: bool = False, max_iterations: int = 20) -> ResolverResult:
         """Resolve a natural language query into a ``ResolverResult``.
 
         Args:

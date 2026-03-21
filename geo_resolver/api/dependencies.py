@@ -1,8 +1,5 @@
 import threading
-from dotenv import load_dotenv
 from geo_resolver import GeoResolver
-
-load_dotenv()
 
 _resolver: GeoResolver | None = None
 _lock = threading.Lock()
