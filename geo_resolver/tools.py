@@ -321,6 +321,9 @@ class ToolExecutor:
             if item.geometry is not None:
                 gid = self._store(item.geometry)
                 entry["geometry_id"] = gid
+                centroid = item.geometry.centroid
+                entry["lat"] = round(centroid.y, 2)
+                entry["lon"] = round(centroid.x, 2)
             if add_buffer_hint:
                 entry["suggested_buffer_km"] = POI_BUFFER_KM.get(item.feature_class, 0.3)
             results.append(entry)
