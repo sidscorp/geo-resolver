@@ -3,7 +3,7 @@ name = "geo-resolver"
 version = "0.1.0"
 description = "Natural language to GeoJSON boundary resolver"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
 readme = "README.md"
 authors = [
     {name = "Siddhartha Nambiar", email = "siddharthanambiar@gmail.com"},
@@ -12,7 +12,6 @@ keywords = ["geojson", "geocoding", "boundaries", "gis", "nlp", "llm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
