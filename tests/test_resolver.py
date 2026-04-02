@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 from unittest.mock import MagicMock, patch
@@ -241,6 +242,7 @@ def test_resolve_mode_unknown_raises(mock_db_cls):
         resolver.resolve("TestPlace", mode="bogus")
 
 
+@patch.dict(os.environ, {k: v for k, v in os.environ.items() if k != "GEO_RESOLVER_MODEL"}, clear=True)
 @patch("geo_resolver.direct_resolver.DirectResolver")
 @patch("geo_resolver.resolver.PlaceDB")
 def test_resolve_without_model_direct_still_works(mock_db_cls, mock_direct_cls, mock_db):

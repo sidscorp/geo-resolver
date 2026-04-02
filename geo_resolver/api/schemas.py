@@ -7,6 +7,12 @@ class ResolveRequest(BaseModel):
     mode: str | None = None  # "llm", "direct", "auto", or None for default
 
 
+class UsageResponse(BaseModel):
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
 class ResolveResponse(BaseModel):
     query: str
     geojson: dict
@@ -14,3 +20,4 @@ class ResolveResponse(BaseModel):
     area_km2: float
     geometry_type: str
     steps: list[dict]
+    usage: UsageResponse | None = None

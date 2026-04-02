@@ -90,6 +90,14 @@ class TokenUsage:
     completion_tokens: int = 0
     total_tokens: int = 0
 
+    def summary(self) -> str:
+        """Human-readable one-line summary of token usage."""
+        return (
+            f"{self.prompt_tokens:,} prompt + "
+            f"{self.completion_tokens:,} completion = "
+            f"{self.total_tokens:,} total"
+        )
+
 
 @dataclass
 class ResolverResult:
@@ -98,6 +106,8 @@ class ResolverResult:
     geometry: Geometry
     steps: list[dict] = field(default_factory=list)
     usage: TokenUsage = field(default_factory=TokenUsage)
+    iteration_usage: list[TokenUsage] = field(default_factory=list)
+    model: str | None = None
 
     @property
     def geojson(self) -> dict:

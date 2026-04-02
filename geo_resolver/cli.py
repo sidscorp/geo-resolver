@@ -30,6 +30,14 @@ def _cmd_resolve(args):
     else:
         print(geojson_str)
 
+    # Print token usage for LLM-based resolves
+    if result.usage and result.usage.total_tokens > 0:
+        model_info = f" ({result.model})" if result.model else ""
+        print(f"\nToken usage{model_info}: {result.usage.summary()}", file=sys.stderr)
+        if args.verbose:
+            for i, iter_usage in enumerate(result.iteration_usage, 1):
+                print(f"  Iteration {i}: {iter_usage.summary()}", file=sys.stderr)
+
 
 def _cmd_download_data(args):
     import logging
@@ -75,6 +83,10 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_parser.add_argument(
         "--max-iterations", type=int, default=20,
         help="Maximum LLM iterations (default: 20)",
+    )
+    resolve_parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Show per-iteration token usage breakdown",
     )
 
     # download-data subcommand

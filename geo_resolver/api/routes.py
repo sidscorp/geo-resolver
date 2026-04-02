@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from shapely.geometry import mapping
 from sse_starlette.sse import EventSourceResponse
 
-from .schemas import ResolveRequest, ResolveResponse
+from .schemas import ResolveRequest, ResolveResponse, UsageResponse
 from .dependencies import get_resolver
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,13 @@ def resolve(req: ResolveRequest):
         "properties": {"query": result.query},
         "geometry": mapping(simplified),
     }
+    usage_resp = None
+    if result.usage and result.usage.total_tokens > 0:
+        usage_resp = UsageResponse(
+            prompt_tokens=result.usage.prompt_tokens,
+            completion_tokens=result.usage.completion_tokens,
+            total_tokens=result.usage.total_tokens,
+        )
     return ResolveResponse(
         query=result.query,
         geojson=geojson,
@@ -58,6 +65,7 @@ def resolve(req: ResolveRequest):
         area_km2=result.area_km2,
         geometry_type=result.geometry.geom_type,
         steps=result.steps,
+        usage=usage_resp,
     )
 
 
@@ -82,6 +90,13 @@ async def resolve_stream(req: ResolveRequest):
                 "properties": {"query": result.query},
                 "geometry": mapping(simplified),
             }
+            usage_data = None
+            if result.usage and result.usage.total_tokens > 0:
+                usage_data = {
+                    "prompt_tokens": result.usage.prompt_tokens,
+                    "completion_tokens": result.usage.completion_tokens,
+                    "total_tokens": result.usage.total_tokens,
+                }
             loop.call_soon_threadsafe(q.put_nowait, ("result", {
                 "query": result.query,
                 "geojson": geojson,
@@ -89,6 +104,7 @@ async def resolve_stream(req: ResolveRequest):
                 "area_km2": result.area_km2,
                 "geometry_type": result.geometry.geom_type,
                 "steps": result.steps,
+                "usage": usage_data,
             }))
         except Exception:
             logger.exception("Streaming resolve failed for query: %s", req.query)

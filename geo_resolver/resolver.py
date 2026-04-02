@@ -92,6 +92,7 @@ class LLMResolver:
         ]
         steps = []
         usage = TokenUsage()
+        iteration_usages: list[TokenUsage] = []
         text_responses = 0
 
         def _emit(step: dict):
@@ -106,6 +107,7 @@ class LLMResolver:
             usage.prompt_tokens += response.usage.prompt_tokens
             usage.completion_tokens += response.usage.completion_tokens
             usage.total_tokens += response.usage.total_tokens
+            iteration_usages.append(response.usage)
 
             if response.tool_calls:
                 if response.content:
@@ -179,7 +181,10 @@ class LLMResolver:
                 )
 
         geometry = executor.geometries[executor.final_id]
-        return ResolverResult(query=query, geometry=geometry, steps=steps, usage=usage)
+        return ResolverResult(
+            query=query, geometry=geometry, steps=steps, usage=usage,
+            iteration_usage=iteration_usages, model=self.model,
+        )
 
     async def resolve_async(
         self, query: str, on_step=None, verbose: bool = False, max_iterations: int = 20,
