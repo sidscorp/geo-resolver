@@ -155,7 +155,14 @@ async def resolve_stream(req: ResolveRequest):
             if event_type in ("result", "error"):
                 break
 
-    return EventSourceResponse(event_generator(), ping=15)
+    return EventSourceResponse(
+        event_generator(),
+        ping=15,
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/usage")

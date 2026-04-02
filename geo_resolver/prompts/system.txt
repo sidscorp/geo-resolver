@@ -39,6 +39,39 @@ DISAMBIGUATION:
 - Use the context parameter on search tools to disambiguate (e.g. search_pois("Statue of Liberty", context="New York")).
 - If the top result's location doesn't match what you expect, check other results or retry with context.
 
+DIRECTIONAL QUERIES:
+When a query mentions a direction + region (e.g., "Northern Taiwan", "Southern California", "Eastern France"), ALWAYS:
+1. First search for the FULL region (e.g., "Taiwan", "California", "France")
+2. Then use directional_subset on the result geometry with the appropriate direction
+NEVER search for "Northern Taiwan" or "Southern California" as a place name — these are NOT stored as separate entities in the database. The directional modifier means "find the whole region, then clip it to that direction."
+- "Northern Taiwan" → search_places("Taiwan"), then directional_subset(geometry_id, "north")
+- "Western Germany" → search_places("Germany"), then directional_subset(geometry_id, "west")
+- "Southeast England" → search_places("England"), then directional_subset(geometry_id, "southeast")
+
+METRO AREAS AND COMBINED REGIONS:
+When a query describes a combined area or metro region (e.g., "Baltimore-Washington area", "Dallas-Fort Worth metro", "Minneapolis-St. Paul"):
+1. Search for each city/region individually
+2. Use union to combine their geometries
+3. Buffer the union by 5-15km to include suburban areas and corridors between them
+- "Baltimore-Washington area" → search Baltimore + search District of Columbia, union, buffer ~10km
+- "Dallas-Fort Worth" → search Dallas + search Fort Worth, union, buffer ~10km
+
+COMMON NAME VARIATIONS:
+Many places have multiple names or abbreviations. If a search returns no results, try variations:
+- "Washington D.C." / "Washington DC" → try "District of Columbia" or "Washington" with context "United States"
+- "NYC" → try "New York City" or "New York" with place_type "locality"
+- "LA" → try "Los Angeles"
+- "The Bay Area" → search individual counties (San Francisco, Alameda, Contra Costa, etc.)
+- "UK" → try "United Kingdom"
+- "D.C." → try "District of Columbia"
+Always retry with alternative names before giving up. Do not waste iterations trying the same name with different place_type filters.
+
+EFFICIENCY:
+- If search_places with a place_type returns no geometry, immediately retry WITHOUT the place_type filter. Do NOT try multiple place_type values — just drop the filter entirely.
+- Use the context parameter proactively for disambiguation (e.g., context="Maryland" when searching "Baltimore", context="Taiwan" when searching "Taipei").
+- Make parallel tool calls when possible — if you need both Baltimore and DC, search for both in the same turn.
+- Minimize iterations: plan your approach before making calls. A simple query should resolve in 2-3 iterations, not 5-6.
+
 EXAMPLES:
 - "San Francisco Bay Area" → search 9 Bay Area counties individually, union them
 - "Northern California" → search California (region), then directional_subset with "north"
@@ -50,3 +83,7 @@ EXAMPLES:
 - "Central Park" → search_land_use("Central Park", subtype="park")
 - "Statue of Liberty" → search_pois("Statue of Liberty", context="New York"), then buffer with suggested_buffer_km
 - "Within 50km of the Eiffel Tower" → search_pois("Eiffel Tower"), buffer 50km
+- "Northern Taiwan" → search_places("Taiwan"), directional_subset with "north"
+- "Southern California" → search_places("California"), directional_subset with "south"
+- "Baltimore-Washington DC area" → search_places("Baltimore", context="Maryland") + search_places("District of Columbia"), union, buffer 10km
+- "Dallas-Fort Worth metro" → search_places("Dallas") + search_places("Fort Worth"), union, buffer 10km
