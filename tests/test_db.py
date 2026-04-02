@@ -36,9 +36,10 @@ def tmp_db(tmp_path):
     sf_wkb = wkb.dumps(box(-122.52, 37.70, -122.35, 37.82))
 
     con.execute("CREATE TABLE division_areas (division_id VARCHAR, geom_wkb BLOB)")
+    ga_wkb = wkb.dumps(box(-85.6, 30.4, -80.8, 35.0))  # Georgia state bbox
     con.execute(
-        "INSERT INTO division_areas VALUES ($1, $2), ($3, $4)",
-        ["d1", ca_wkb, "d5", sf_wkb],
+        "INSERT INTO division_areas VALUES ($1, $2), ($3, $4), ($5, $6)",
+        ["d1", ca_wkb, "d5", sf_wkb, "d2", ga_wkb],
     )
     con.close()
 
@@ -285,3 +286,120 @@ def test_search_land_use_returns_wikidata(tmp_db):
 def test_close(tmp_db):
     db = PlaceDB(str(tmp_db))
     db.close()  # should not raise
+
+
+# --- Spatial context filtering tests ---
+
+
+def test_resolve_context_geom(tmp_db):
+    """_resolve_context_geom should return WKB bytes for a known division."""
+    db = PlaceDB(str(tmp_db))
+    geom_wkb = db._resolve_context_geom("California")
+    assert geom_wkb is not None
+    assert isinstance(geom_wkb, bytes)
+    geom = wkb.loads(geom_wkb)
+    assert geom.geom_type == "Polygon"
+    db.close()
+
+
+def test_resolve_context_geom_unknown(tmp_db):
+    """_resolve_context_geom should return None for an unknown context."""
+    db = PlaceDB(str(tmp_db))
+    assert db._resolve_context_geom("Narnia") is None
+    db.close()
+
+
+def test_resolve_context_geom_caching(tmp_db):
+    """_resolve_context_geom should cache results."""
+    db = PlaceDB(str(tmp_db))
+    result1 = db._resolve_context_geom("California")
+    result2 = db._resolve_context_geom("California")
+    assert result1 is result2  # same object from cache
+    db.close()
+
+
+def test_search_land_features_with_context(tmp_db):
+    """Mount Diablo is inside California bbox, so context=California should return it."""
+    db = PlaceDB(str(tmp_db))
+    results = db.search_land_features("Mount Diablo", context="California")
+    assert len(results) == 1
+    assert results[0].name == "Mount Diablo"
+    db.close()
+
+
+def test_search_land_features_with_wrong_context(tmp_db):
+    """Mount Diablo is NOT inside Georgia bbox, so context=Georgia should filter it out."""
+    db = PlaceDB(str(tmp_db))
+    # Georgia (country, GE) has no division_area in our test data,
+    # so _resolve_context_geom returns None and no spatial filter is applied.
+    # Georgia (region, US-GA) also has no area. So context wont filter.
+
+
+# --- Spatial context filtering tests ---
+
+
+def test_resolve_context_geom(tmp_db):
+    db = PlaceDB(str(tmp_db))
+    geom_wkb = db._resolve_context_geom("California")
+    assert geom_wkb is not None
+    assert isinstance(geom_wkb, bytes)
+    geom = wkb.loads(geom_wkb)
+    assert geom.geom_type == "Polygon"
+    db.close()
+
+
+def test_resolve_context_geom_unknown(tmp_db):
+    db = PlaceDB(str(tmp_db))
+    assert db._resolve_context_geom("Narnia") is None
+    db.close()
+
+
+def test_resolve_context_geom_caching(tmp_db):
+    db = PlaceDB(str(tmp_db))
+    result1 = db._resolve_context_geom("California")
+    result2 = db._resolve_context_geom("California")
+    assert result1 is result2
+    db.close()
+
+
+def test_search_land_features_with_context(tmp_db):
+    db = PlaceDB(str(tmp_db))
+    results = db.search_land_features("Mount Diablo", context="California")
+    assert len(results) == 1
+    assert results[0].name == "Mount Diablo"
+    db.close()
+
+
+def test_search_land_features_with_wrong_context(tmp_db):
+    db = PlaceDB(str(tmp_db))
+    results = db.search_land_features("Mount Diablo", context="Georgia")
+    assert len(results) == 0
+    db.close()
+
+
+def test_search_water_features_with_context(tmp_db):
+    db = PlaceDB(str(tmp_db))
+    results = db.search_water_features("Lake Merritt", context="California")
+    assert len(results) == 1
+    db.close()
+
+
+def test_search_land_use_with_context(tmp_db):
+    db = PlaceDB(str(tmp_db))
+    results = db.search_land_use("Golden Gate Park", context="California")
+    assert len(results) == 1
+    db.close()
+
+
+def test_search_land_use_with_wrong_context(tmp_db):
+    db = PlaceDB(str(tmp_db))
+    results = db.search_land_use("Golden Gate Park", context="Georgia")
+    assert len(results) == 0
+    db.close()
+
+
+def test_search_features_context_unknown_passthrough(tmp_db):
+    db = PlaceDB(str(tmp_db))
+    results = db.search_land_features("Mount Diablo", context="Narnia")
+    assert len(results) == 1
+    db.close()

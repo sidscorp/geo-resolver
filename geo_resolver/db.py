@@ -62,6 +62,36 @@ class PlaceDB:
             return country, None
         return country, region
 
+
+    def _resolve_context_geom(self, context: str) -> bytes | None:
+        """Resolve a context string to a WKB geometry for spatial filtering.
+
+        Looks up the context in the divisions table, retrieves the
+        corresponding area geometry, and returns its WKB bytes.
+        Results are cached for the lifetime of this PlaceDB instance.
+        """
+        if not hasattr(self, "_context_geom_cache"):
+            self._context_geom_cache: dict[str, bytes | None] = {}
+        if context in self._context_geom_cache:
+            return self._context_geom_cache[context]
+
+        row = self.con.execute("""
+            SELECT a.geom_wkb
+            FROM divisions d
+            JOIN division_areas a ON a.division_id = d.id
+            WHERE (d.name = $ctx OR d.name_en = $ctx)
+            ORDER BY CASE d.subtype
+                WHEN 'locality' THEN 0 WHEN 'localadmin' THEN 1
+                WHEN 'county' THEN 2 WHEN 'region' THEN 3
+                WHEN 'country' THEN 4 ELSE 5 END,
+                d.prominence DESC NULLS LAST
+            LIMIT 1
+        """, {"ctx": context}).fetchone()
+
+        result = bytes(row[0]) if row and row[0] else None
+        self._context_geom_cache[context] = result
+        return result
+
     def _search_divisions(
         self,
         name: str,
@@ -176,6 +206,7 @@ class PlaceDB:
         class_value: str | None,
         limit: int,
         use_ilike: bool,
+        context_geom_wkb: bytes | None = None,
     ) -> list[tuple]:
         """Run a feature search query, either exact-match or ILIKE."""
         if use_ilike:
@@ -191,6 +222,12 @@ class PlaceDB:
         if class_value:
             conditions.append(f"{class_column} = $class_value")
             params["class_value"] = class_value
+
+        if context_geom_wkb:
+            conditions.append(
+                "ST_Intersects(ST_GeomFromWKB(geom_wkb), ST_GeomFromWKB($context_geom))"
+            )
+            params["context_geom"] = context_geom_wkb
 
         where = " AND ".join(conditions)
 
@@ -224,6 +261,7 @@ class PlaceDB:
         name: str,
         class_column: str = "class",
         class_value: str | None = None,
+        context: str | None = None,
         limit: int = 5,
     ) -> list[Feature]:
         """Generic search across feature tables (land, water, land_use)."""
@@ -235,9 +273,11 @@ class PlaceDB:
         if self.features_con is None:
             return []
 
-        rows = self._run_feature_query(table, class_column, name, class_value, limit, use_ilike=False)
+        context_geom = self._resolve_context_geom(context) if context else None
+
+        rows = self._run_feature_query(table, class_column, name, class_value, limit, use_ilike=False, context_geom_wkb=context_geom)
         if not rows:
-            rows = self._run_feature_query(table, class_column, name, class_value, limit, use_ilike=True)
+            rows = self._run_feature_query(table, class_column, name, class_value, limit, use_ilike=True, context_geom_wkb=context_geom)
 
         results = []
         for row in rows:
@@ -276,30 +316,36 @@ class PlaceDB:
         return results
 
     def search_land_features(
-        self, name: str, feature_class: str | None = None, limit: int = 5
+        self, name: str, feature_class: str | None = None,
+        context: str | None = None, limit: int = 5,
     ) -> list[Feature]:
         """Search natural land features (islands, mountains, peaks, etc.)."""
         return self._search_feature_table(
             "land_features", "land", name,
-            class_column="class", class_value=feature_class, limit=limit,
+            class_column="class", class_value=feature_class,
+            context=context, limit=limit,
         )
 
     def search_water_features(
-        self, name: str, feature_class: str | None = None, limit: int = 5
+        self, name: str, feature_class: str | None = None,
+        context: str | None = None, limit: int = 5,
     ) -> list[Feature]:
         """Search water features (lakes, rivers, bays, etc.)."""
         return self._search_feature_table(
             "water_features", "water", name,
-            class_column="class", class_value=feature_class, limit=limit,
+            class_column="class", class_value=feature_class,
+            context=context, limit=limit,
         )
 
     def search_land_use(
-        self, name: str, subtype: str | None = None, limit: int = 5
+        self, name: str, subtype: str | None = None,
+        context: str | None = None, limit: int = 5,
     ) -> list[Feature]:
         """Search land-use areas (parks, protected areas, cemeteries, etc.)."""
         return self._search_feature_table(
             "land_use_features", "land_use", name,
-            class_column="subtype", class_value=subtype, limit=limit,
+            class_column="subtype", class_value=subtype,
+            context=context, limit=limit,
         )
 
     def _run_pois_query(

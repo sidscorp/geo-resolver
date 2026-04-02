@@ -354,17 +354,17 @@ class ToolExecutor:
     def _search_land_features(self, name: str = "", feature_class: str | None = None, context: str | None = None) -> str:
         if not name:
             return json.dumps({"error": "name is required for search_land_features"})
-        return self._format_search_results(self.db.search_land_features(name, feature_class))
+        return self._format_search_results(self.db.search_land_features(name, feature_class, context=context))
 
     def _search_water_features(self, name: str = "", feature_class: str | None = None, context: str | None = None) -> str:
         if not name:
             return json.dumps({"error": "name is required for search_water_features"})
-        return self._format_search_results(self.db.search_water_features(name, feature_class))
+        return self._format_search_results(self.db.search_water_features(name, feature_class, context=context))
 
     def _search_land_use(self, name: str = "", subtype: str | None = None, context: str | None = None) -> str:
         if not name:
             return json.dumps({"error": "name is required for search_land_use"})
-        return self._format_search_results(self.db.search_land_use(name, subtype))
+        return self._format_search_results(self.db.search_land_use(name, subtype, context=context))
 
     def _search_pois(self, name: str = "", category: str | None = None, context: str | None = None) -> str:
         if not name:
