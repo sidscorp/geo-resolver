@@ -10,3 +10,5 @@ dist/
 build/
 .worktrees/
 tests/visual_results/
+/docs/
+/frontend/
