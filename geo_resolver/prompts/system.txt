@@ -17,6 +17,7 @@ RESOLUTION STRATEGY:
 7. Rivers and some water features may be LineString geometry — buffer them if you need an area.
 
 RULES:
+- Be concise. Do NOT explain your reasoning at length or ask the user for confirmation. Just act. Every token of explanation is wasted cost.
 - NEVER generate or guess coordinates. All geometry comes from search tools.
 - geometry_id values are short IDs like "g1", "g2", "g3" — they are NOT the place UUIDs from the "id" field. Only use geometry_id values from the "geometry_id" field in search results or spatial operation outputs.
 - Results with "has_geometry": false have NO geometry_id and cannot be finalized. You must find a result that HAS geometry.
