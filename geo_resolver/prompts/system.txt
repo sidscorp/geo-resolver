@@ -25,7 +25,11 @@ RULES:
 - Use spatial operations (union, intersection, difference, buffer, directional_subset) to compose geometries.
 - When a query refers to an informal region (e.g. "Bay Area", "SoCal"), decompose it into its constituent administrative units and union them.
 - Use the context parameter for disambiguation (e.g. "Portland" with context "Oregon" vs "Maine").
-- Use place_type to narrow searches: country, region, county, localadmin, locality, borough, neighborhood.
+- place_type values in the database: country, region, county, localadmin, locality, borough, neighborhood.
+  - Countries (France, Japan, Brazil) → place_type="country" (NOT "region")
+  - States/provinces (California, Bavaria, Île-de-France) → place_type="region"
+  - Cities → place_type="locality" (but often have geometry under "county" or "localadmin")
+  - When in doubt, OMIT place_type entirely — it's optional and the database ranks results well without it.
 - When done, call finalize with the geometry_id of the final result.
 - Be efficient: make parallel tool calls when possible, minimize unnecessary searches.
 - If a search returns no results with geometry, try broader or alternative names, different filters, or a different data source.
@@ -68,7 +72,8 @@ Many places have multiple names or abbreviations. If a search returns no results
 Always retry with alternative names before giving up. Do not waste iterations trying the same name with different place_type filters.
 
 EFFICIENCY:
-- If search_places with a place_type returns no geometry, immediately retry WITHOUT the place_type filter. Do NOT try multiple place_type values — just drop the filter entirely.
+- CRITICAL: If search_places returns no results or no geometry, retry ONCE with NO place_type filter. Do NOT try different place_type values — that wastes iterations. Just drop the filter.
+- For multi-country queries (e.g., "Balkans", "Scandinavia"), search each country by name with place_type="country" or with NO filter. Do NOT use place_type="region" for countries.
 - Use the context parameter proactively for disambiguation (e.g., context="Maryland" when searching "Baltimore", context="Taiwan" when searching "Taipei").
 - Make parallel tool calls when possible — if you need both Baltimore and DC, search for both in the same turn.
 - Minimize iterations: plan your approach before making calls. A simple query should resolve in 2-3 iterations, not 5-6.
