@@ -2,7 +2,6 @@ import importlib.resources
 import json
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections.abc import Callable
 from .db import PlaceDB
 from .tools import ToolExecutor, TOOL_DEFINITIONS
@@ -128,58 +127,22 @@ class LLMResolver:
                 ]
                 messages.append(assistant_msg)
 
-                # Classify tool calls: search tools can run in parallel,
-                # spatial ops and finalize must run sequentially
-                _SEARCH_TOOLS = {"search_places", "search_land_features",
-                                 "search_water_features", "search_land_use", "search_pois"}
+                for tc in response.tool_calls:
+                    message = _describe_step(tc.name, tc.arguments)
+                    result = executor.execute(tc.name, tc.arguments)
+                    step = {
+                        "tool": tc.name,
+                        "args": tc.arguments,
+                        "message": message,
+                        "result_summary": result[:200],
+                    }
+                    _emit(step)
 
-                if len(response.tool_calls) > 1 and all(
-                    tc.name in _SEARCH_TOOLS for tc in response.tool_calls
-                ):
-                    # All search tools — run in parallel
-                    def _run_tool(tc):
-                        return tc, executor.execute(tc.name, tc.arguments)
-
-                    with ThreadPoolExecutor(max_workers=min(len(response.tool_calls), 8)) as pool:
-                        futures = {pool.submit(_run_tool, tc): tc for tc in response.tool_calls}
-                        results_map = {}
-                        for future in as_completed(futures):
-                            tc, result = future.result()
-                            results_map[tc.id] = result
-
-                    # Emit steps and append messages in original order
-                    for tc in response.tool_calls:
-                        result = results_map[tc.id]
-                        message = _describe_step(tc.name, tc.arguments)
-                        step = {
-                            "tool": tc.name,
-                            "args": tc.arguments,
-                            "message": message,
-                            "result_summary": result[:200],
-                        }
-                        _emit(step)
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": result,
-                        })
-                else:
-                    # Mixed or single tool calls — run sequentially
-                    for tc in response.tool_calls:
-                        message = _describe_step(tc.name, tc.arguments)
-                        result = executor.execute(tc.name, tc.arguments)
-                        step = {
-                            "tool": tc.name,
-                            "args": tc.arguments,
-                            "message": message,
-                            "result_summary": result[:200],
-                        }
-                        _emit(step)
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": result,
-                        })
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result,
+                    })
 
                 if executor.final_id:
                     break
