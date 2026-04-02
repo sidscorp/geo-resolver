@@ -10,6 +10,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from .schemas import ResolveRequest, ResolveResponse, UsageResponse
 from .dependencies import get_resolver
+from .usage_tracker import log_request, get_stats
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +36,13 @@ def resolve(req: ResolveRequest):
         result = resolver.resolve(req.query, mode=req.mode)
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("Resolve failed for query: %s", req.query)
+        log_request(
+            query=req.query, mode=req.mode,
+            latency_s=time.monotonic() - t0,
+            status="error", error=str(exc),
+        )
         raise HTTPException(status_code=500, detail="Internal server error")
     finally:
         _resolve_semaphore.release()
@@ -58,6 +64,15 @@ def resolve(req: ResolveRequest):
             completion_tokens=result.usage.completion_tokens,
             total_tokens=result.usage.total_tokens,
         )
+    log_request(
+        query=req.query,
+        mode=req.mode,
+        model=getattr(result, "model", None),
+        prompt_tokens=result.usage.prompt_tokens if result.usage else 0,
+        completion_tokens=result.usage.completion_tokens if result.usage else 0,
+        total_tokens=result.usage.total_tokens if result.usage else 0,
+        latency_s=latency,
+    )
     return ResolveResponse(
         query=result.query,
         geojson=geojson,
@@ -97,6 +112,14 @@ async def resolve_stream(req: ResolveRequest):
                     "completion_tokens": result.usage.completion_tokens,
                     "total_tokens": result.usage.total_tokens,
                 }
+            log_request(
+                query=req.query,
+                mode=req.mode,
+                model=getattr(result, "model", None),
+                prompt_tokens=result.usage.prompt_tokens if result.usage else 0,
+                completion_tokens=result.usage.completion_tokens if result.usage else 0,
+                total_tokens=result.usage.total_tokens if result.usage else 0,
+            )
             loop.call_soon_threadsafe(q.put_nowait, ("result", {
                 "query": result.query,
                 "geojson": geojson,
@@ -106,8 +129,12 @@ async def resolve_stream(req: ResolveRequest):
                 "steps": result.steps,
                 "usage": usage_data,
             }))
-        except Exception:
+        except Exception as exc:
             logger.exception("Streaming resolve failed for query: %s", req.query)
+            log_request(
+                query=req.query, mode=req.mode,
+                status="error", error=str(exc),
+            )
             loop.call_soon_threadsafe(q.put_nowait, ("error", "Internal server error"))
         finally:
             _resolve_semaphore.release()
@@ -129,3 +156,8 @@ async def resolve_stream(req: ResolveRequest):
                 break
 
     return EventSourceResponse(event_generator(), ping=15)
+
+
+@router.get("/usage")
+def usage(days: int = 30):
+    return get_stats(days=days)
