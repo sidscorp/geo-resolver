@@ -2,10 +2,18 @@ import importlib.resources
 import json
 import logging
 import os
+import time
 from collections.abc import Callable
 from .db import PlaceDB
 from .tools import ToolExecutor, TOOL_DEFINITIONS
 from .models import ResolverResult, TokenUsage
+
+try:
+    from langfuse import Langfuse
+    _langfuse = Langfuse()
+    logger.info("Langfuse tracing enabled")
+except Exception:
+    _langfuse = None
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +93,19 @@ class LLMResolver:
         if len(query) > 2000:
             raise ValueError("query must be at most 2000 characters")
 
+        # Start Langfuse trace
+        trace = None
+        if _langfuse:
+            try:
+                trace = _langfuse.trace(
+                    name="resolve",
+                    input={"query": query, "model": self.model},
+                    metadata={"max_iterations": max_iterations},
+                )
+            except Exception:
+                logger.debug("Failed to create Langfuse trace", exc_info=True)
+
+        resolve_start = time.monotonic()
         executor = ToolExecutor(self.db)
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -103,11 +124,31 @@ class LLMResolver:
                 print(f"  {step.get('message', step.get('tool', '...'))}")
 
         for i in range(max_iterations):
+            iter_start = time.monotonic()
             response = self.adapter.chat_completion(messages=messages, tools=TOOL_DEFINITIONS)
+            iter_latency = time.monotonic() - iter_start
             usage.prompt_tokens += response.usage.prompt_tokens
             usage.completion_tokens += response.usage.completion_tokens
             usage.total_tokens += response.usage.total_tokens
             iteration_usages.append(response.usage)
+
+            # Log LLM call to Langfuse
+            if trace:
+                try:
+                    trace.generation(
+                        name=f"llm-call-{i+1}",
+                        model=self.model,
+                        input=messages[-1] if messages else None,
+                        output={"content": response.content, "tool_calls": len(response.tool_calls or [])},
+                        usage={
+                            "input": response.usage.prompt_tokens,
+                            "output": response.usage.completion_tokens,
+                            "total": response.usage.total_tokens,
+                        },
+                        metadata={"latency_s": round(iter_latency, 2), "iteration": i + 1},
+                    )
+                except Exception:
+                    pass
 
             if response.tool_calls:
                 if response.content:
@@ -181,6 +222,27 @@ class LLMResolver:
                 )
 
         geometry = executor.geometries[executor.final_id]
+        total_latency = time.monotonic() - resolve_start
+
+        # Complete Langfuse trace
+        if trace:
+            try:
+                trace.update(
+                    output={
+                        "geometry_type": geometry.geom_type,
+                        "steps": len(steps),
+                        "total_tokens": usage.total_tokens,
+                    },
+                    metadata={
+                        "latency_s": round(total_latency, 2),
+                        "iterations": len(iteration_usages),
+                        "prompt_tokens": usage.prompt_tokens,
+                        "completion_tokens": usage.completion_tokens,
+                    },
+                )
+            except Exception:
+                pass
+
         return ResolverResult(
             query=query, geometry=geometry, steps=steps, usage=usage,
             iteration_usage=iteration_usages, model=self.model,
