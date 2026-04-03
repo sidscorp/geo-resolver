@@ -8,16 +8,27 @@ from .db import PlaceDB
 from .tools import ToolExecutor, TOOL_DEFINITIONS
 from .models import ResolverResult, TokenUsage
 
-try:
-    from langfuse import Langfuse
-    _langfuse = Langfuse()
-    _langfuse_ok = _langfuse._tracing_enabled
-    if _langfuse_ok:
-        logger.info("Langfuse tracing enabled")
-    else:
-        _langfuse = None
-except Exception:
-    _langfuse = None
+_langfuse = None
+_langfuse_checked = False
+
+
+def _get_langfuse():
+    """Lazy-init Langfuse after dotenv has loaded."""
+    global _langfuse, _langfuse_checked
+    if _langfuse_checked:
+        return _langfuse
+    _langfuse_checked = True
+    try:
+        from langfuse import Langfuse
+        lf = Langfuse()
+        if lf._tracing_enabled:
+            _langfuse = lf
+            logger.info("Langfuse tracing enabled (host=%s)", os.environ.get("LANGFUSE_HOST", "default"))
+        else:
+            logger.info("Langfuse tracing disabled (no credentials)")
+    except Exception:
+        logger.debug("Langfuse init failed", exc_info=True)
+    return _langfuse
 
 logger = logging.getLogger(__name__)
 
@@ -99,9 +110,10 @@ class LLMResolver:
 
         resolve_start = time.monotonic()
         trace_id = None
-        if _langfuse:
+        lf = _get_langfuse()
+        if lf:
             try:
-                trace_id = _langfuse.create_trace_id()
+                trace_id = lf.create_trace_id()
             except Exception:
                 pass
         executor = ToolExecutor(self.db)
@@ -131,9 +143,9 @@ class LLMResolver:
             iteration_usages.append(response.usage)
 
             # Log LLM call to Langfuse
-            if _langfuse and trace_id:
+            if lf and trace_id:
                 try:
-                    with _langfuse.start_as_current_observation(
+                    with lf.start_as_current_observation(
                         trace_id=trace_id,
                         name=f"llm-call-{i+1}",
                         type="generation",
@@ -227,9 +239,9 @@ class LLMResolver:
         total_latency = time.monotonic() - resolve_start
 
         # Log complete trace to Langfuse
-        if _langfuse and trace_id:
+        if lf and trace_id:
             try:
-                with _langfuse.start_as_current_observation(
+                with lf.start_as_current_observation(
                     trace_id=trace_id,
                     name="resolve",
                     input=query,
@@ -245,7 +257,7 @@ class LLMResolver:
                     },
                 ):
                     pass
-                _langfuse.flush()
+                lf.flush()
             except Exception:
                 logger.debug("Failed to send Langfuse trace", exc_info=True)
 
